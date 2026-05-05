@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "camoufox-profiles"
-version = "0.2.0"
+version = "0.3.0"
 description = "Persistent antidetect browser profile management for Camoufox"
 readme = "README.md"
 license = "MIT"
@@ -14,25 +14,35 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "orjson>=3.9.0",
     "click>=8.0",
+    # cfox-local dependencies
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
 ]
 crypto = [
     "pyzipper>=0.3.6",
 ]
+tray = [
+    "pystray>=0.19.0",
+    "Pillow>=10.0",
+]
 
 [project.scripts]
 cfox = "camoufox_profiles.cli:main"
+cfox-local = "cfox_local.__main__:main"
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/camoufox_profiles"]
+packages = ["src/camoufox_profiles", "cfox_local"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
