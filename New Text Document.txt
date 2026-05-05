@@ -1,0 +1,11 @@
+[ARCHIVED] Original brainstorm notes.
+
+These notes have been reviewed, critiqued against Camoufox source code,
+and the validated insights have been moved to: DESIGN_NOTES.md
+
+Key outcomes of the review:
+- 70% of what was proposed is already handled by Camoufox (fingerprint injection, cross-layer consistency, TLS/JA3)
+- The core gap is fingerprint PERSISTENCE (saving + replaying config across sessions)
+- Storage/state solved by Playwright persistent_context — no custom engine needed
+- Behavior (mouse, timing, scroll) is automation layer responsibility, not profile manager
+- Implementation plan created: see implementation_plan.md
