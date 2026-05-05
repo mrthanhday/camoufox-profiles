@@ -41,3 +41,20 @@ class WarmupError(Exception):
         super().__init__(f"Warmup failed for profile {profile_id}: {reason}")
         self.profile_id = profile_id
         self.reason = reason
+
+
+class ProxyNotFoundError(Exception):
+    """Raised when a proxy cannot be found in the pool."""
+
+    def __init__(self, identifier: str):
+        super().__init__(f"Proxy not found: {identifier}")
+        self.identifier = identifier
+
+
+class TransferError(Exception):
+    """Raised when profile export/import fails."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"Transfer failed: {reason}")
+        self.reason = reason
+

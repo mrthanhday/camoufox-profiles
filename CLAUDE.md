@@ -171,20 +171,101 @@ git commit -m "Fix remove-cfrprefs for FF142 JS config migration"
 
 **Why Playwright's commit?** Their patches expect specific line numbers from their commit. Using Mozilla's tarball causes 88+ reject files.
 
+## Profile Management System (`src/camoufox_profiles/`)
+
+This repo contains a **profile management layer** on top of Camoufox, built as an installable Python package with a CLI (`cfox`).
+
+### Architecture
+
+```
+src/camoufox_profiles/
+├── models.py        # Profile, DriftSchedule, DriftEvent, ProxyPoolEntry, HealthReport
+├── store.py         # Async + Sync SQLite (WAL mode) with schema versioning
+├── migrations.py    # V1→V2 additive schema migration engine
+├── fingerprint.py   # Camoufox fingerprint capture via BrowserForge
+├── launcher.py      # Browser launch with IP consistency guard + drift engine
+├── drift.py         # Natural fingerprint aging (UA version, viewport, history)
+├── proxy.py         # Centralized proxy pool CRUD + health checking
+├── health.py        # Profile health diagnostics (5 check types)
+├── batch.py         # Parallel operations via asyncio.Semaphore
+├── transfer.py      # ZIP export/import with optional AES-256 (pyzipper)
+├── warmup.py        # Browser warmup with popular sites
+├── manager.py       # High-level API wiring all features
+├── cli.py           # CLI entry point: cfox <command>
+└── exceptions.py    # Custom exception hierarchy
+```
+
+### Key Design Rules
+
+1. **IP guard ≠ drift**: The IP consistency guard is a safety mechanism for null-proxy profiles. It runs ALWAYS, even when `drift=False`.
+2. **Proxy passwords excluded from exports**: Only `server` and `has_credentials` flag are exported.
+3. **Fingerprint immutables**: OS, GPU, screen resolution, CPU cores, and fonts are NEVER modified after creation.
+4. **Schema migrations**: Use additive `ALTER TABLE ADD COLUMN` with `_column_exists()` checks for idempotency.
+5. **SQL comment stripping**: Migration parser strips `-- comment` lines before splitting by `;` to prevent multi-line CREATE TABLE corruption.
+
+### CLI Entry Point
+
+```bash
+cfox create <name> [--os windows|macos|linux] [--proxy server] [--tag tag]
+cfox list [--tag tag] [--os os]
+cfox launch <name> [--headless] [--no-drift]
+cfox warmup <name> [--headless]
+cfox delete <name>
+cfox health <name>
+cfox proxy add <server> [-u user] [-p pass] [--tag tag]
+cfox proxy list [--tag tag]
+cfox proxy check
+cfox export <name> <path> [--password secret]
+cfox import <path> [--name new_name] [--password secret]
+```
+
+### Database
+
+SQLite in WAL mode at `<base_dir>/profiles.db`. V2 schema includes:
+- `profiles` — Main table with fingerprint config, drift schedule, IP tracking
+- `drift_events` — Immutable audit log of all fingerprint changes
+- `proxy_pool` — Centralized proxy entries with health status
+- `schema_migrations` — Version tracking for additive migrations
+
+### Testing Profile System
+
+```bash
+# Install in dev mode
+pip install -e ".[dev]"
+
+# Run profile system tests
+python -m pytest tests/ -v
+
+# Manual CLI testing
+cfox create test-1 --os windows
+cfox health test-1
+cfox launch test-1
+```
+
 ## Key Documentation
 
 - **[FIREFOX_UPGRADE_WORKFLOW.md](FIREFOX_UPGRADE_WORKFLOW.md)**: Why git-based approach, how `retag-baseline` and `copy-additions` work, repo-in-repo structure
 - **[WORKFLOW.md](WORKFLOW.md)**: Patch investigation process, stealth intent analysis, checkpoint workflow
 - **[FIREFOX_142_UPGRADE_NOTES.md](FIREFOX_142_UPGRADE_NOTES.md)**: Version-specific changes and patch fixes
-- **[README.md](README.md)**: User-facing documentation (fingerprint injection, features, testing sites)
+- **[BUILD_FIXES_142.md](BUILD_FIXES_142.md)**: Build errors and fixes for Firefox 142 upgrade
+- **[DESIGN_NOTES.md](DESIGN_NOTES.md)**: Profile system design decisions, drift engine, IP guard logic
+- **[README.md](README.md)**: User-facing documentation, CLI reference, API reference
 - **`Makefile`**: Build system targets and their purposes
 
 ## Testing & Validation
 
+### Firefox Build
 After fixes, validate against bot detection systems:
 ```bash
 make tests  # Run automated Playwright tests
 make build && make run  # Manual testing
+```
+
+### Profile System
+```bash
+pip install -e ".[dev]"
+python -m pytest tests/ -v
+cfox create test --os windows && cfox health test && cfox delete test
 ```
 
 **Production testing sites:**

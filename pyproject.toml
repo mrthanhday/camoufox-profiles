@@ -4,15 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "camoufox-profiles"
-version = "0.1.0"
+version = "0.2.0"
 description = "Persistent antidetect browser profile management for Camoufox"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "camoufox[geoip]",
+    "camoufox[geoip] @ git+https://github.com/coryking/camoufox.git@v142.0.1-fork.27#subdirectory=pythonlib",
     "aiosqlite>=0.20.0",
     "orjson>=3.9.0",
+    "click>=8.0",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,15 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
 ]
+crypto = [
+    "pyzipper>=0.3.6",
+]
+
+[project.scripts]
+cfox = "camoufox_profiles.cli:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/camoufox_profiles"]

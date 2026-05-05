@@ -12,9 +12,16 @@ import aiosqlite
 import orjson
 
 from .exceptions import ProfileNameExistsError, ProfileNotFoundError
-from .models import Profile, ProxyConfig, _new_id, _utcnow
+from .models import (
+    DriftEvent,
+    DriftSchedule,
+    Profile,
+    ProxyConfig,
+    _new_id,
+    _utcnow,
+)
 
-# SQL schema
+# SQL schema (V2)
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
@@ -29,7 +36,48 @@ CREATE TABLE IF NOT EXISTS profiles (
     user_data_dir TEXT NOT NULL,
     total_sessions INTEGER DEFAULT 0,
     tags TEXT DEFAULT '[]',
-    notes TEXT DEFAULT ''
+    notes TEXT DEFAULT '',
+    drift_schedule TEXT DEFAULT '{}',
+    firefox_base_version INTEGER,
+    proxy_id TEXT,
+    warmup_completed INTEGER DEFAULT 0,
+    creation_ip TEXT,
+    creation_region TEXT,
+    last_known_ip TEXT,
+    last_known_region TEXT
+);
+
+CREATE TABLE IF NOT EXISTS drift_events (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    drift_type TEXT NOT NULL,
+    old_value TEXT DEFAULT '',
+    new_value TEXT DEFAULT '',
+    FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS proxy_pool (
+    id TEXT PRIMARY KEY,
+    server TEXT NOT NULL,
+    username TEXT,
+    password TEXT,
+    tags TEXT DEFAULT '[]',
+    is_alive INTEGER DEFAULT 1,
+    last_checked_at TEXT,
+    last_ip TEXT,
+    last_latency_ms INTEGER,
+    consecutive_failures INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    notes TEXT DEFAULT '',
+    auto_rotate_enabled INTEGER DEFAULT 0,
+    rotate_pool_tag TEXT
+);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    description TEXT NOT NULL,
+    applied_at TEXT NOT NULL
 );
 """
 
@@ -37,17 +85,24 @@ _CREATE_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_profiles_name ON profiles(name);
 CREATE INDEX IF NOT EXISTS idx_profiles_created ON profiles(created_at);
 CREATE INDEX IF NOT EXISTS idx_profiles_target_os ON profiles(target_os);
+CREATE INDEX IF NOT EXISTS idx_drift_profile ON drift_events(profile_id);
+CREATE INDEX IF NOT EXISTS idx_drift_timestamp ON drift_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_proxy_alive ON proxy_pool(is_alive);
 """
 
 _INSERT_PROFILE = """
 INSERT INTO profiles (
     id, name, created_at, last_used_at, target_os,
     fingerprint_config, proxy_server, proxy_username, proxy_password,
-    user_data_dir, total_sessions, tags, notes
+    user_data_dir, total_sessions, tags, notes,
+    drift_schedule, firefox_base_version, proxy_id, warmup_completed,
+    creation_ip, creation_region, last_known_ip, last_known_region
 ) VALUES (
     :id, :name, :created_at, :last_used_at, :target_os,
     :fingerprint_config, :proxy_server, :proxy_username, :proxy_password,
-    :user_data_dir, :total_sessions, :tags, :notes
+    :user_data_dir, :total_sessions, :tags, :notes,
+    :drift_schedule, :firefox_base_version, :proxy_id, :warmup_completed,
+    :creation_ip, :creation_region, :last_known_ip, :last_known_region
 );
 """
 
@@ -72,7 +127,6 @@ def _build_list_query(
     params: list = []
 
     if tag:
-        # SQLite JSON: check if tag exists in the JSON array
         conditions.append("tags LIKE ?")
         params.append(f'%"{tag}"%')
 
@@ -102,7 +156,7 @@ class ProfileStore:
         self._db: Optional[aiosqlite.Connection] = None
 
     async def initialize(self) -> None:
-        """Create database, tables, and directories if they don't exist."""
+        """Create database, tables, and directories. Run migrations on existing DB."""
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.browser_data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -112,9 +166,27 @@ class ProfileStore:
         # Enable WAL mode for concurrent reads
         await self._db.execute("PRAGMA journal_mode=WAL;")
         await self._db.execute("PRAGMA busy_timeout=5000;")
+        await self._db.execute("PRAGMA foreign_keys=ON;")
 
-        await self._db.executescript(_CREATE_TABLE + _CREATE_INDEXES)
-        await self._db.commit()
+        # Run migrations for existing databases
+        from .migrations import run_migrations, get_current_version
+        current_version = await get_current_version(self._db)
+
+        if current_version == 0:
+            # Fresh database — create all tables
+            await self._db.executescript(_CREATE_TABLE + _CREATE_INDEXES)
+            # Record as v2 schema
+            await self._db.execute(
+                "INSERT OR REPLACE INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",
+                (2, "Initial V2 schema", _utcnow().isoformat()),
+            )
+            await self._db.commit()
+        else:
+            # Existing database — run pending migrations
+            applied = await run_migrations(self._db)
+            if applied:
+                import logging
+                logging.getLogger(__name__).info("Applied migrations: %s", applied)
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -140,6 +212,9 @@ class ProfileStore:
         proxy: Optional[ProxyConfig] = None,
         tags: Optional[List[str]] = None,
         notes: str = "",
+        proxy_id: Optional[str] = None,
+        creation_ip: Optional[str] = None,
+        creation_region: Optional[str] = None,
     ) -> Profile:
         """
         Create a new profile with the given fingerprint config.
@@ -148,9 +223,12 @@ class ProfileStore:
             name: Human-readable profile name (must be unique).
             target_os: Target OS ('windows', 'macos', 'linux').
             fingerprint_config: Complete Camoufox config dict.
-            proxy: Optional fixed proxy binding.
+            proxy: Optional inline proxy config (V1 compat).
             tags: Optional list of tags.
             notes: Optional notes.
+            proxy_id: Optional reference to a proxy pool entry.
+            creation_ip: IP address at creation time.
+            creation_region: Region code at creation time.
 
         Returns:
             The created Profile object.
@@ -167,9 +245,15 @@ class ProfileStore:
 
         profile_id = _new_id()
         user_data_dir = self._profile_data_dir(profile_id)
-
-        # Create browser data directory
         os.makedirs(user_data_dir, exist_ok=True)
+
+        # Determine Firefox version from config
+        import re
+        ua = fingerprint_config.get("navigator.userAgent", "")
+        ff_version = None
+        match = re.search(r"Firefox/(\d+)\.0", ua)
+        if match:
+            ff_version = int(match.group(1))
 
         profile = Profile(
             id=profile_id,
@@ -181,6 +265,12 @@ class ProfileStore:
             user_data_dir=user_data_dir,
             tags=tags or [],
             notes=notes,
+            firefox_base_version=ff_version,
+            proxy_id=proxy_id,
+            creation_ip=creation_ip,
+            creation_region=creation_region,
+            last_known_ip=creation_ip,
+            last_known_region=creation_region,
         )
 
         await db.execute(_INSERT_PROFILE, profile.to_row())
@@ -277,7 +367,6 @@ class ProfileStore:
         params: list = []
 
         if name is not None:
-            # Check name uniqueness
             async with db.execute(
                 "SELECT id FROM profiles WHERE name = ? AND id != ?",
                 (name, profile_id),
@@ -311,6 +400,61 @@ class ProfileStore:
 
         return await self.get(profile_id)
 
+    async def update_v2_fields(
+        self,
+        profile_id: str,
+        drift_schedule: Optional[DriftSchedule] = None,
+        fingerprint_config: Optional[Dict[str, Any]] = None,
+        proxy_id: Optional[str] = None,
+        warmup_completed: Optional[bool] = None,
+        creation_ip: Optional[str] = None,
+        creation_region: Optional[str] = None,
+        last_known_ip: Optional[str] = None,
+        last_known_region: Optional[str] = None,
+    ) -> None:
+        """Update V2-specific fields."""
+        db = self._ensure_db()
+        updates = []
+        params: list = []
+
+        if drift_schedule is not None:
+            updates.append("drift_schedule = ?")
+            params.append(orjson.dumps(drift_schedule.to_dict()).decode("utf-8"))
+
+        if fingerprint_config is not None:
+            updates.append("fingerprint_config = ?")
+            params.append(orjson.dumps(fingerprint_config).decode("utf-8"))
+
+        if proxy_id is not None:
+            updates.append("proxy_id = ?")
+            params.append(proxy_id)
+
+        if warmup_completed is not None:
+            updates.append("warmup_completed = ?")
+            params.append(1 if warmup_completed else 0)
+
+        if creation_ip is not None:
+            updates.append("creation_ip = ?")
+            params.append(creation_ip)
+
+        if creation_region is not None:
+            updates.append("creation_region = ?")
+            params.append(creation_region)
+
+        if last_known_ip is not None:
+            updates.append("last_known_ip = ?")
+            params.append(last_known_ip)
+
+        if last_known_region is not None:
+            updates.append("last_known_region = ?")
+            params.append(last_known_region)
+
+        if updates:
+            query = f"UPDATE profiles SET {', '.join(updates)} WHERE id = ?"
+            params.append(profile_id)
+            await db.execute(query, params)
+            await db.commit()
+
     async def record_session(self, profile_id: str) -> None:
         """Increment session counter and update last_used_at timestamp."""
         db = self._ensure_db()
@@ -320,6 +464,38 @@ class ProfileStore:
             (now, profile_id),
         )
         await db.commit()
+
+    async def record_drift_events(self, profile_id: str, events: List[DriftEvent]) -> None:
+        """Insert drift events into the audit log."""
+        db = self._ensure_db()
+        for event in events:
+            await db.execute(
+                "INSERT INTO drift_events (id, profile_id, timestamp, drift_type, old_value, new_value) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (event.id, profile_id, event.timestamp, event.drift_type, event.old_value, event.new_value),
+            )
+        await db.commit()
+
+    async def get_drift_history(self, profile_id: str, limit: int = 50) -> List[DriftEvent]:
+        """Get drift event history for a profile."""
+        db = self._ensure_db()
+        async with db.execute(
+            "SELECT * FROM drift_events WHERE profile_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (profile_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        return [
+            DriftEvent(
+                id=dict(r)["id"],
+                profile_id=dict(r)["profile_id"],
+                timestamp=dict(r)["timestamp"],
+                drift_type=dict(r)["drift_type"],
+                old_value=dict(r).get("old_value", ""),
+                new_value=dict(r).get("new_value", ""),
+            )
+            for r in rows
+        ]
 
     async def delete(self, profile_id: str) -> None:
         """
@@ -333,7 +509,7 @@ class ProfileStore:
         # Get profile to find its data dir
         profile = await self.get(profile_id)
 
-        # Delete from database
+        # Delete from database (CASCADE deletes drift_events)
         await db.execute(_DELETE_BY_ID, (profile_id,))
         await db.commit()
 
@@ -386,8 +562,25 @@ class ProfileStoreSync:
 
         self._db.execute("PRAGMA journal_mode=WAL;")
         self._db.execute("PRAGMA busy_timeout=5000;")
-        self._db.executescript(_CREATE_TABLE + _CREATE_INDEXES)
-        self._db.commit()
+        self._db.execute("PRAGMA foreign_keys=ON;")
+
+        # Run migrations for existing databases
+        from .migrations import run_migrations_sync
+        # Check if fresh or existing
+        cursor = self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='profiles'"
+        )
+        is_existing = cursor.fetchone() is not None
+
+        if not is_existing:
+            self._db.executescript(_CREATE_TABLE + _CREATE_INDEXES)
+            self._db.execute(
+                "INSERT OR REPLACE INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",
+                (2, "Initial V2 schema", _utcnow().isoformat()),
+            )
+            self._db.commit()
+        else:
+            run_migrations_sync(self._db)
 
     def close(self) -> None:
         """Close the database connection."""
@@ -484,7 +677,7 @@ class ProfileStoreSync:
     ) -> Profile:
         """Update mutable fields of a profile."""
         db = self._ensure_db()
-        self.get(profile_id)  # Verify exists
+        self.get(profile_id)
 
         updates = []
         params: list = []
@@ -559,7 +752,6 @@ class ProfileStoreSync:
             params = []
         cursor = db.execute(query, params)
         row = cursor.fetchone()
-        # _row_factory returns dict, so we need to handle both formats
         if isinstance(row, dict):
             return list(row.values())[0]
         return row[0] if row else 0
