@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api", tags=["browser"])
 class LaunchRequest(BaseModel):
     headless: bool = False
     drift: bool = True
+    startup_url: Optional[str] = None
 
 
 class WarmupRequest(BaseModel):

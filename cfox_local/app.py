@@ -90,6 +90,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # System info endpoint
+    @app.get("/api/info", tags=["system"])
+    async def system_info():
+        """Return machine identity and system info for the UI."""
+        import platform
+        return {
+            "machine_id": settings.machine_id,
+            "hostname": platform.node(),
+            "version": "0.3.0",
+            "platform": platform.system().lower(),
+        }
+
     # Include route modules
     app.include_router(profiles.router)
     app.include_router(browser.router)

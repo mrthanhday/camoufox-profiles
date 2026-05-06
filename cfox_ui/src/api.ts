@@ -48,6 +48,13 @@ export interface HealthReport {
   checks: HealthCheck[];
 }
 
+export interface SystemInfo {
+  machine_id: string;
+  hostname: string;
+  version: string;
+  platform: string;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -89,7 +96,7 @@ export const api = {
     request<void>(`/api/profiles/${id}?source=local`, { method: 'DELETE' }),
 
   // Browser
-  launchProfile: (id: string, opts?: { headless?: boolean; drift?: boolean }) =>
+  launchProfile: (id: string, opts?: { headless?: boolean; drift?: boolean; startup_url?: string }) =>
     request<Session>(`/api/profiles/${id}/launch?source=local`, {
       method: 'POST',
       body: JSON.stringify(opts || {}),
@@ -117,4 +124,8 @@ export const api = {
 
   checkProxies: () =>
     request<{ checked: number; results: ProxyEntry[] }>('/api/proxies/check', { method: 'POST' }),
+
+  // System
+  getSystemInfo: () =>
+    request<SystemInfo>('/api/info'),
 };
