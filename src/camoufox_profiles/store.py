@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS proxy_pool (
     rotate_pool_tag TEXT
 );
 
+CREATE TABLE IF NOT EXISTS tags_meta (
+    name TEXT PRIMARY KEY,
+    color TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     description TEXT NOT NULL,

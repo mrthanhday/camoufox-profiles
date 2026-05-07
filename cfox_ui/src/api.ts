@@ -53,6 +53,13 @@ export interface SystemInfo {
   hostname: string;
   version: string;
   platform: string;
+  max_tags_per_profile: number;
+}
+
+export interface TagMeta {
+  name: string;
+  color: string;
+  count: number;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -119,11 +126,33 @@ export const api = {
   addProxy: (data: { server: string; username?: string; password?: string; tags?: string[] }) =>
     request<ProxyEntry>('/api/proxies', { method: 'POST', body: JSON.stringify(data) }),
 
+  updateProxy: (id: string, data: { tags?: string[] }) =>
+    request<ProxyEntry>(`/api/proxies/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
   removeProxy: (id: string) =>
     request<void>(`/api/proxies/${id}`, { method: 'DELETE' }),
 
   checkProxies: () =>
     request<{ checked: number; results: ProxyEntry[] }>('/api/proxies/check', { method: 'POST' }),
+
+  checkProxy: (id: string) =>
+    request<ProxyEntry>(`/api/proxies/${id}/check`, { method: 'POST' }),
+
+  bulkAddProxies: (data: { proxies: Array<{ server: string; username?: string; password?: string }>; tags?: string[]; skip_duplicates?: boolean }) =>
+    request<{ added: number; skipped: number; proxies: ProxyEntry[] }>('/api/proxies/bulk', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Tags
+  listTags: () =>
+    request<{ tags: TagMeta[] }>('/api/tags'),
+
+  createTag: (data: { name: string; color?: string }) =>
+    request<TagMeta>('/api/tags', { method: 'POST', body: JSON.stringify(data) }),
+
+  updateTag: (name: string, data: { new_name?: string; color?: string }) =>
+    request<TagMeta>(`/api/tags/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  deleteTag: (name: string) =>
+    request<void>(`/api/tags/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // System
   getSystemInfo: () =>

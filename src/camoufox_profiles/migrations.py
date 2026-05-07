@@ -50,6 +50,17 @@ MIGRATIONS: List[Migration] = [
             ALTER TABLE profiles ADD COLUMN last_known_region TEXT;
         """,
     ),
+    Migration(
+        version=3,
+        description="Add tags_meta table for tag colors",
+        up_sql="""
+            CREATE TABLE IF NOT EXISTS tags_meta (
+                name TEXT PRIMARY KEY,
+                color TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+        """,
+    ),
 ]
 
 # Table creation SQL that must be run via executescript (handles complex statements)

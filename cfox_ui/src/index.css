@@ -474,6 +474,13 @@ a:hover { color: var(--accent-hover); }
   font-size: 12px;
   color: var(--text-secondary);
   font-family: var(--font-mono);
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: border-color var(--fast);
+}
+
+.cell-proxy:hover {
+  border-bottom-color: var(--border-hover);
 }
 
 .cell-lastrun {
@@ -1026,4 +1033,145 @@ select.input {
 .inline-edit-actions .btn-cancel:hover {
   color: var(--text-secondary);
   border-color: var(--border-hover);
+}
+
+/* ── TagInput Component ──────────────────────────────────────── */
+
+.tag-input {
+  position: relative;
+  width: 100%;
+}
+
+.tag-input-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 8px;
+  min-height: 36px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: text;
+  transition: border-color var(--fast);
+}
+
+.tag-input-box:focus-within {
+  border-color: var(--border-focus);
+}
+
+.tag-input-box.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tag-input-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.tag-input-chip .color-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tag-input-chip .remove {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  margin-left: 2px;
+  transition: color var(--fast);
+}
+
+.tag-input-chip .remove:hover {
+  color: var(--red);
+}
+
+.tag-input-field {
+  flex: 1;
+  min-width: 60px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  padding: 2px 0;
+}
+
+.tag-input-field::placeholder {
+  color: var(--text-muted);
+}
+
+.tag-input-limit {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
+
+.tag-input-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.tag-input-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--fast);
+}
+
+.tag-input-dropdown-item:hover,
+.tag-input-dropdown-item.highlighted {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tag-input-dropdown-item .color-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tag-input-dropdown-item .tag-name {
+  flex: 1;
+}
+
+.tag-input-dropdown-item .tag-count {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.tag-input-dropdown-item.create {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
 }

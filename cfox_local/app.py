@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .routes import browser, health, profiles, proxies, ws
+from .routes import browser, health, profiles, proxies, tags, ws
 from .session_manager import BrowserSessionManager
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     browser.init_routes(pm, bsm)
     health.init_routes(pm)
     proxies.init_routes(pm)
+    tags.init_routes(pm)
 
     logger.info("cfox-local started on %s:%d", settings.host, settings.port)
     logger.info("Base directory: %s", settings.base_dir)
@@ -100,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "hostname": platform.node(),
             "version": "0.3.0",
             "platform": platform.system().lower(),
+            "max_tags_per_profile": settings.max_tags_per_profile,
         }
 
     # Include route modules
@@ -107,6 +109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(browser.router)
     app.include_router(health.router)
     app.include_router(proxies.router)
+    app.include_router(tags.router)
     app.include_router(ws.router)
 
     # Serve built Web UI if available

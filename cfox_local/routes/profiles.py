@@ -119,6 +119,24 @@ async def create_profile(req: CreateProfileRequest) -> Dict[str, Any]:
         )
 
     try:
+        # Validate tag limit
+        max_tags = getattr(_pm, '_settings', None)
+        if req.tags:
+            from fastapi import Request
+            # Get max_tags from app settings
+            tag_limit = 10  # default
+            try:
+                import importlib
+                from ..config import Settings
+                tag_limit = Settings.load().max_tags_per_profile
+            except Exception:
+                pass
+            if len(req.tags) > tag_limit:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Maximum {tag_limit} tags per profile allowed",
+                )
+
         profile = await _pm.create_profile(
             name=req.name,
             os=req.os,
@@ -129,6 +147,8 @@ async def create_profile(req: CreateProfileRequest) -> Dict[str, Any]:
             tags=req.tags or None,
             notes=req.notes,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -170,6 +190,22 @@ async def update_profile(
     if req.name is not None:
         update_data["name"] = req.name
     if req.tags is not None:
+        # Validate tag limit
+        tag_limit = 10
+        try:
+            from .profiles import _get_tag_limit
+        except ImportError:
+            pass
+        try:
+            from ..config import Settings
+            tag_limit = Settings.load().max_tags_per_profile
+        except Exception:
+            pass
+        if len(req.tags) > tag_limit:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum {tag_limit} tags per profile allowed",
+            )
         update_data["tags"] = req.tags
     if req.notes is not None:
         update_data["notes"] = req.notes
@@ -177,17 +213,22 @@ async def update_profile(
     if update_data:
         await _pm.store.update(profile_id, **update_data)
 
-    # Handle proxy update
+    # Handle proxy update (direct SQL — store.update() doesn't handle proxy fields)
     if req.proxy_server is not None:
         from camoufox_profiles.models import ProxyConfig
-        proxy = ProxyConfig(
-            server=req.proxy_server,
-            username=req.proxy_username,
-            password=req.proxy_password,
+        db = _pm.store._ensure_db()
+        await db.execute(
+            "UPDATE profiles SET proxy_server = ?, proxy_username = ?, proxy_password = ? WHERE id = ?",
+            (req.proxy_server, req.proxy_username, req.proxy_password, profile_id),
         )
-        await _pm.store.update(profile_id, proxy=proxy)
+        await db.commit()
     elif req.proxy_id is not None:
-        await _pm.store.update(profile_id, proxy_id=req.proxy_id)
+        db = _pm.store._ensure_db()
+        await db.execute(
+            "UPDATE profiles SET proxy_id = ? WHERE id = ?",
+            (req.proxy_id, profile_id),
+        )
+        await db.commit()
 
     profile = await _pm.store.get(profile_id)
     return _profile_to_response(profile, "local", _bsm.is_running(profile_id))

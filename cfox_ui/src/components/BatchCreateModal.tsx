@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { TagInput } from './TagInput';
 
 interface BatchCreateModalProps {
   open: boolean;
@@ -18,7 +19,7 @@ export function BatchCreateModal({ open, onClose, onCreate }: BatchCreateModalPr
   const [startNum, setStartNum] = useState(1);
   const [os, setOs] = useState('windows');
   const [proxyServer, setProxyServer] = useState('');
-  const [tags, setTags] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(0);
@@ -39,7 +40,7 @@ export function BatchCreateModal({ open, onClose, onCreate }: BatchCreateModalPr
     setError('');
     setProgress(0);
 
-    const parsedTags = tags ? tags.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+    const parsedTags = tags.length > 0 ? tags : undefined;
     let created = 0;
     const errors: string[] = [];
 
@@ -66,7 +67,7 @@ export function BatchCreateModal({ open, onClose, onCreate }: BatchCreateModalPr
     } else {
       // Reset and close
       setPrefix(''); setCount(5); setStartNum(1);
-      setOs('windows'); setProxyServer(''); setTags('');
+      setOs('windows'); setProxyServer(''); setTags([]);
       setProgress(0);
       onClose();
     }
@@ -137,11 +138,10 @@ export function BatchCreateModal({ open, onClose, onCreate }: BatchCreateModalPr
 
           <div className="input-group">
             <label>Tags (shared)</label>
-            <input
-              className="input"
+            <TagInput
               value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder="ecommerce, farming (comma-separated)"
+              onChange={setTags}
+              placeholder="Add tags..."
             />
           </div>
 

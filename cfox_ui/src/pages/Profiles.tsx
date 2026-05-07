@@ -10,12 +10,19 @@ import { BatchCreateModal } from '../components/BatchCreateModal';
 import { ImportModal } from '../components/ImportModal';
 import { HealthModal } from '../components/HealthModal';
 import { InlineEditPopup } from '../components/InlineEditPopup';
+import { InlineProxyEditPopup } from '../components/InlineProxyEditPopup';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { BulkEditModal } from '../components/BulkEditModal';
 
 type InlineEdit = {
   profileId: string;
   field: 'name' | 'tags' | 'notes';
+  value: string;
+  rect: DOMRect;
+} | null;
+
+type InlineProxyEdit = {
+  profileId: string;
   value: string;
   rect: DOMRect;
 } | null;
@@ -136,6 +143,7 @@ export function Profiles() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [inlineEdit, setInlineEdit] = useState<InlineEdit>(null);
+  const [inlineProxyEdit, setInlineProxyEdit] = useState<InlineProxyEdit>(null);
 
   // Modal states for bulk actions
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
@@ -373,7 +381,7 @@ export function Profiles() {
 
   // bulkSetTags: opened via modal, value injected here
   const executeBulkSetTags = useCallback(async (input: string) => {
-    const tags = input.split(',').map((t) => t.trim()).filter(Boolean);
+    const tags = JSON.parse(input) as string[];
     const ids = selectedProfiles.map((p) => p.id);
     let ok = 0;
     for (const id of ids) {
@@ -416,7 +424,7 @@ export function Profiles() {
     const { profileId, field } = inlineEdit;
     try {
       if (field === 'tags') {
-        const tags = newValue.split(',').map((t) => t.trim()).filter(Boolean);
+        const tags = JSON.parse(newValue);
         await api.updateProfile(profileId, { tags });
       } else {
         await api.updateProfile(profileId, { [field]: newValue });
@@ -429,6 +437,24 @@ export function Profiles() {
     }
   };
 
+  const openInlineProxyEdit = (profileId: string, value: string, e: React.MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setInlineProxyEdit({ profileId, value, rect });
+  };
+
+  const handleInlineProxySave = async (data: { proxy_server?: string; proxy_id?: string }) => {
+    if (!inlineProxyEdit) return;
+    const { profileId } = inlineProxyEdit;
+    try {
+      await api.updateProfile(profileId, data);
+      await fetchProfiles();
+      showToast('success', 'Proxy updated');
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : 'Update failed');
+    }
+    setInlineProxyEdit(null);
+  };
+
   // ── Keyboard shortcuts ────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -437,7 +463,7 @@ export function Profiles() {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
       // Skip if any modal is open
       if (showCreate || showBatchCreate || showImport || healthReport ||
-          showBulkDeleteConfirm || showBulkSetTags || showBulkSetProxy || inlineEdit) return;
+          showBulkDeleteConfirm || showBulkSetTags || showBulkSetProxy || inlineEdit || inlineProxyEdit) return;
 
       if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -628,7 +654,15 @@ export function Profiles() {
                     {col('src') && <td style={{ textAlign: 'center' }}><SourceIcon source={p.source} /></td>}
                     {col('os') && <td style={{ textAlign: 'center' }}><OsIcon os={p.os} /></td>}
                     {col('status') && <td><StatusBadge status={p.status} /></td>}
-                    {col('proxy') && <td><span className="cell-proxy">{p.proxy_server || '—'}</span></td>}
+                    {col('proxy') && <td>
+                      <span 
+                        className="cell-proxy"
+                        onClick={(e) => openInlineProxyEdit(p.id, p.proxy_server || '', e)}
+                        title="Click to edit proxy"
+                      >
+                        {p.proxy_server || '—'}
+                      </span>
+                    </td>}
                     {col('lastrun') && <td><span className="cell-lastrun">{relativeTime(p.last_used_at)}</span></td>}
                     {col('tags') && <td>
                       <div
@@ -745,13 +779,13 @@ export function Profiles() {
         onClose={() => setShowBulkDeleteConfirm(false)}
       />
 
-      {/* Bulk set tags */}
       <BulkEditModal
         open={showBulkSetTags}
         title={`Set Tags — ${selected.size} profile${selected.size !== 1 ? 's' : ''}`}
         label="Tags"
-        placeholder="e.g. work, facebook, group-a"
-        hint="Comma-separated. This will replace existing tags on all selected profiles."
+        placeholder="Add tags..."
+        hint="This will replace existing tags on all selected profiles."
+        mode="tags"
         onSubmit={executeBulkSetTags}
         onClose={() => setShowBulkSetTags(false)}
       />
@@ -802,12 +836,22 @@ export function Profiles() {
       {/* Inline edit popup */}
       {inlineEdit && (
         <InlineEditPopup
-          label={inlineEdit.field === 'tags' ? 'Tags (comma-separated)' : inlineEdit.field}
-          value={inlineEdit.value}
+          label={inlineEdit.field === 'tags' ? 'Tags' : inlineEdit.field}
+          value={inlineEdit.field === 'tags' ? JSON.stringify(inlineEdit.value.split(',').map(t => t.trim()).filter(Boolean)) : inlineEdit.value}
           multiline={inlineEdit.field === 'notes'}
+          mode={inlineEdit.field === 'tags' ? 'tags' : 'text'}
           anchorRect={inlineEdit.rect}
           onSave={handleInlineSave}
           onClose={() => setInlineEdit(null)}
+        />
+      )}
+
+      {inlineProxyEdit && (
+        <InlineProxyEditPopup
+          initialValue={inlineProxyEdit.value}
+          anchorRect={inlineProxyEdit.rect}
+          onSave={handleInlineProxySave}
+          onClose={() => setInlineProxyEdit(null)}
         />
       )}
 

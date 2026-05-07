@@ -199,24 +199,26 @@ class ProxyStore:
             return None
         return self._row_to_entry(dict(row))
 
-    async def check_all(self, concurrency: int = 5) -> List[Tuple[str, bool, Optional[str], Optional[int]]]:
-        """Check all proxies health with concurrency control."""
+    async def check_all(self, concurrency: int = 5) -> List[ProxyPoolEntry]:
+        """Check all proxies health with concurrency control.
+
+        Returns the full updated proxy list after all checks complete.
+        """
         proxies = await self.list()
         semaphore = asyncio.Semaphore(concurrency)
-        results = []
 
-        async def _check_one(entry: ProxyPoolEntry):
+        async def _check_one(entry: ProxyPoolEntry) -> None:
             async with semaphore:
                 alive, ip, latency = await check_proxy_health(
                     entry.server, entry.username, entry.password
                 )
                 await self.update_health(entry.id, alive, ip, latency)
-                return entry.id, alive, ip, latency
 
         tasks = [_check_one(p) for p in proxies]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-        return [r for r in results if not isinstance(r, Exception)]
+        # Re-fetch to get updated health data
+        return await self.list()
 
     @staticmethod
     def _row_to_entry(row: Dict[str, Any]) -> ProxyPoolEntry:

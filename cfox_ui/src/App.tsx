@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Profiles } from './pages/Profiles';
 import { ProxyPool } from './pages/ProxyPool';
+import { TagManager } from './pages/TagManager';
 import { Settings } from './pages/Settings';
 import { useProfiles } from './hooks/useProfiles';
 import { api } from './api';
 import type { SystemInfo } from './api';
 
-type Page = 'profiles' | 'proxies' | 'settings';
+type Page = 'profiles' | 'proxies' | 'tags' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<Page>('profiles');
@@ -50,6 +51,12 @@ export default function App() {
           >
             [*] Settings
           </button>
+          <button
+            className={`nav-item ${page === 'tags' ? 'active' : ''}`}
+            onClick={() => setPage('tags')}
+          >
+            [#] Tag Manager
+          </button>
         </nav>
 
         <div className="sidebar-footer">
@@ -70,6 +77,7 @@ export default function App() {
       <main className="main-content">
         {page === 'profiles' && <Profiles />}
         {page === 'proxies' && <ProxyPool />}
+        {page === 'tags' && <TagManager />}
         {page === 'settings' && <Settings />}
       </main>
     </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { TagInput } from './TagInput';
 
 interface CreateProfileModalProps {
   open: boolean;
@@ -20,7 +21,7 @@ export function CreateProfileModal({ open, onClose, onCreate }: CreateProfileMod
   const [proxyServer, setProxyServer] = useState('');
   const [proxyUser, setProxyUser] = useState('');
   const [proxyPass, setProxyPass] = useState('');
-  const [tags, setTags] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -42,12 +43,12 @@ export function CreateProfileModal({ open, onClose, onCreate }: CreateProfileMod
         proxy_server: proxyServer || undefined,
         proxy_username: proxyUser || undefined,
         proxy_password: proxyPass || undefined,
-        tags: tags ? tags.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+        tags: tags.length > 0 ? tags : undefined,
         notes: notes || undefined,
       });
       // Reset
       setName(''); setOs('windows'); setProxyServer(''); setProxyUser('');
-      setProxyPass(''); setTags(''); setNotes('');
+      setProxyPass(''); setTags([]); setNotes('');
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create profile');
@@ -117,11 +118,10 @@ export function CreateProfileModal({ open, onClose, onCreate }: CreateProfileMod
 
           <div className="input-group">
             <label>Tags</label>
-            <input
-              className="input"
+            <TagInput
               value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder="ecommerce, farming (comma-separated)"
+              onChange={setTags}
+              placeholder="Add tags..."
             />
           </div>
 

@@ -37,6 +37,9 @@ class Settings:
     server_url: Optional[str] = None
     server_api_key: Optional[str] = None
 
+    # Limits
+    max_tags_per_profile: int = 10
+
     def __post_init__(self) -> None:
         self.base_dir = Path(self.base_dir)
         if not self.machine_id:

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { TagInput } from './TagInput';
 
 interface BulkEditModalProps {
   open: boolean;
@@ -8,6 +9,7 @@ interface BulkEditModalProps {
   hint?: string;
   initialValue?: string;
   allowEmpty?: boolean;
+  mode?: 'text' | 'tags';
   onSubmit: (value: string) => void;
   onClose: () => void;
 }
@@ -20,15 +22,18 @@ export function BulkEditModal({
   hint,
   initialValue = '',
   allowEmpty = false,
+  mode = 'text',
   onSubmit,
   onClose,
 }: BulkEditModalProps) {
   const [value, setValue] = useState(initialValue);
+  const [tags, setTags] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
       setValue(initialValue);
+      setTags([]);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [open, initialValue]);
@@ -37,8 +42,12 @@ export function BulkEditModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!allowEmpty && !value.trim()) return;
-    onSubmit(value.trim());
+    if (mode === 'tags') {
+      onSubmit(JSON.stringify(tags));
+    } else {
+      if (!allowEmpty && !value.trim()) return;
+      onSubmit(value.trim());
+    }
     onClose();
   };
 
@@ -58,14 +67,22 @@ export function BulkEditModal({
 
         <div className="form-group">
           <label className="form-label">{label}</label>
-          <input
-            ref={inputRef}
-            type="text"
-            className="input"
-            placeholder={placeholder}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
+          {mode === 'tags' ? (
+            <TagInput
+              value={tags}
+              onChange={setTags}
+              placeholder={placeholder}
+            />
+          ) : (
+            <input
+              ref={inputRef}
+              type="text"
+              className="input"
+              placeholder={placeholder}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+          )}
           {hint && (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
               {hint}
@@ -84,7 +101,7 @@ export function BulkEditModal({
           <button
             type="submit"
             className="btn btn-primary btn-sm"
-            disabled={!allowEmpty && !value.trim()}
+            disabled={mode !== 'tags' && !allowEmpty && !value.trim()}
           >
             Apply
           </button>
