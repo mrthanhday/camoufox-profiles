@@ -33,7 +33,13 @@ export function useProfiles() {
     if (event.type === 'browser_status' && event.profile_id) {
       setProfiles((prev) =>
         prev.map((p) =>
-          p.id === event.profile_id ? { ...p, status: event.status || p.status } : p
+          p.id === event.profile_id
+            ? {
+                ...p,
+                status: event.status || p.status,
+                ...(event.last_used_at ? { last_used_at: event.last_used_at as string } : {}),
+              }
+            : p
         )
       );
     }

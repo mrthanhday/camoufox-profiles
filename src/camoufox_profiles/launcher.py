@@ -257,7 +257,7 @@ async def launch_profile(
             try:
                 await context.close()
             except Exception:
-                logger.warning("Failed to close browser context")
+                logger.debug("Browser context already closed (expected on manual close)")
 
         if playwright:
             try:

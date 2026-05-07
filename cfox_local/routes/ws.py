@@ -102,7 +102,7 @@ class EventBus:
 
         for ws in subscribers:
             try:
-                await ws.send_bytes(payload)
+                await ws.send_text(payload.decode())
             except Exception:
                 dead.append(ws)
 

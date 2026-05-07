@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sqlite3
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
+
+import psutil
 
 from .routes.ws import Event, EventBus, EventType
 
@@ -74,6 +75,7 @@ class BrowserSessionManager:
         self._sessions: Dict[str, BrowserSession] = {}
         self._lock = asyncio.Lock()
         self._bus = EventBus.instance()
+        self._watcher_tasks: Dict[str, asyncio.Task] = {}
 
         # Ensure running_sessions table
         self._init_db()
@@ -189,14 +191,25 @@ class BrowserSessionManager:
             context = await launch_cm.__aenter__()
 
             # Get browser PID
+            # For persistent contexts, browser.process is None.
+            # PID lives at: context._impl_obj._browser._connection._transport._proc
             browser_pid = None
             try:
-                if hasattr(context, "browser") and context.browser:
-                    proc = context.browser.process
-                    if proc:
-                        browser_pid = proc.pid
+                transport = context._impl_obj._browser._connection._transport
+                if hasattr(transport, "_proc") and transport._proc:
+                    browser_pid = transport._proc.pid
             except Exception:
                 pass
+
+            if browser_pid is None:
+                # Fallback: try the public API (works for non-persistent contexts)
+                try:
+                    if hasattr(context, "browser") and context.browser:
+                        proc = context.browser.process
+                        if proc:
+                            browser_pid = proc.pid
+                except Exception:
+                    pass
 
             session = BrowserSession(
                 profile_id=profile_id,
@@ -207,9 +220,9 @@ class BrowserSessionManager:
                 _browser=launch_cm,
             )
 
-            # Register disconnect handler
+            # Fast-path: context close event (may not fire on abrupt close)
             context.on("close", lambda: asyncio.ensure_future(
-                self._on_context_close(profile_id)
+                self._cleanup_session(profile_id, reason="external")
             ))
 
             async with self._lock:
@@ -217,10 +230,19 @@ class BrowserSessionManager:
 
             self._persist_session(session)
 
+            # Reliable path: background PID monitoring
+            if browser_pid:
+                watcher = asyncio.create_task(
+                    self._watch_browser_pid(profile_id, browser_pid)
+                )
+                self._watcher_tasks[profile_id] = watcher
+
+            now = datetime.now(timezone.utc).isoformat()
             self._bus.emit(Event(
                 type=EventType.BROWSER_STATUS,
                 profile_id=profile_id,
                 status="running",
+                extra={"last_used_at": now},
             ))
 
             logger.info(
@@ -242,8 +264,7 @@ class BrowserSessionManager:
     async def stop(self, profile_id: str) -> None:
         """Stop a running browser session."""
         async with self._lock:
-            session = self._sessions.get(profile_id)
-            if session is None:
+            if profile_id not in self._sessions:
                 raise ValueError(f"No running session for profile '{profile_id}'")
 
         self._bus.emit(Event(
@@ -252,56 +273,97 @@ class BrowserSessionManager:
             status="stopping",
         ))
 
-        try:
-            # Exit the V2 context manager (closes browser, updates session count)
-            if session._browser:
-                await session._browser.__aexit__(None, None, None)
-
-            async with self._lock:
-                self._sessions.pop(profile_id, None)
-
-            self._remove_persisted(profile_id)
-
-            self._bus.emit(Event(
-                type=EventType.BROWSER_STATUS,
-                profile_id=profile_id,
-                status="idle",
-            ))
-
-            logger.info("Stopped browser for '%s'", session.profile_name)
-
-        except Exception as e:
-            logger.error("Error stopping browser for '%s': %s", session.profile_name, e)
-            # Force cleanup
-            async with self._lock:
-                self._sessions.pop(profile_id, None)
-            self._remove_persisted(profile_id)
-            self._bus.emit(Event(
-                type=EventType.BROWSER_STATUS,
-                profile_id=profile_id,
-                status="idle",
-                error=str(e),
-            ))
-            raise
+        # Delegate all cleanup (cancel watcher, pop session, __aexit__, emit idle)
+        await self._cleanup_session(profile_id, reason="stopped")
 
     async def _on_context_close(self, profile_id: str) -> None:
-        """Handle unexpected browser close (crash)."""
+        """Handle unexpected browser close via Playwright event (fast-path)."""
+        await self._cleanup_session(profile_id, reason="external")
+
+    async def _cleanup_session(self, profile_id: str, *, reason: str = "external") -> None:
+        """
+        Idempotent cleanup when browser dies externally.
+
+        Called from either:
+        - context.on("close") fast-path (if Playwright fires it)
+        - _watch_browser_pid() reliable path (PID monitoring)
+        - Both may fire — idempotent by design.
+
+        Args:
+            reason: "external" (user closed) or "crash" (process crashed)
+        """
+        # Cancel watcher and wait for it to finish to prevent race
+        task = self._watcher_tasks.pop(profile_id, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
         async with self._lock:
             session = self._sessions.pop(profile_id, None)
 
         if session is None:
-            return  # Already stopped normally
+            return  # Already cleaned up (stop() or duplicate call)
 
         self._remove_persisted(profile_id)
 
-        logger.warning("Browser crashed for profile '%s'", session.profile_name)
+        # Exit the launcher context manager to cleanup Playwright resources
+        if session._browser:
+            try:
+                await session._browser.__aexit__(None, None, None)
+            except Exception as e:
+                logger.debug(
+                    "Launcher CM exit during cleanup for '%s': %s",
+                    session.profile_name, e,
+                )
 
+        if reason == "crash":
+            status = "error"
+            error_msg = "Browser crashed unexpectedly"
+        else:
+            status = "idle"
+            error_msg = None
+
+        logger.info("Browser closed for '%s' (%s)", session.profile_name, reason)
+
+        now = datetime.now(timezone.utc).isoformat()
         self._bus.emit(Event(
             type=EventType.BROWSER_STATUS,
             profile_id=profile_id,
-            status="idle",
-            error="Browser crashed or was closed externally",
+            status=status,
+            error=error_msg,
+            extra={"last_used_at": now},
         ))
+
+    async def _watch_browser_pid(self, profile_id: str, pid: int) -> None:
+        """
+        Background task that monitors browser PID and triggers cleanup when it dies.
+
+        Uses psutil.pid_exists() for reliable cross-platform PID checking.
+        (os.kill(pid, 0) does NOT raise on Windows when process is dead.)
+        """
+        poll_interval = 2  # seconds
+
+        try:
+            while True:
+                await asyncio.sleep(poll_interval)
+
+                # Check if session was already cleaned up (e.g. via stop())
+                if profile_id not in self._sessions:
+                    return
+
+                # Check if PID is still alive (psutil is cross-platform safe)
+                if not psutil.pid_exists(pid):
+                    logger.info(
+                        "Detected browser process exit (pid=%d) for profile '%s'",
+                        pid, profile_id,
+                    )
+                    await self._cleanup_session(profile_id, reason="external")
+                    return
+        except asyncio.CancelledError:
+            return  # stop() or shutdown() cancelled us
 
     # ── Queries ───────────────────────────────────────────────────
 
@@ -337,13 +399,7 @@ class BrowserSessionManager:
             pid = row.get("browser_pid")
             profile_id = row["profile_id"]
 
-            is_alive = False
-            if pid:
-                try:
-                    os.kill(pid, 0)  # Check if process exists (signal 0)
-                    is_alive = True
-                except (OSError, ProcessLookupError):
-                    pass
+            is_alive = pid and psutil.pid_exists(pid)
 
             if is_alive:
                 # Process alive but we lost the playwright context — kill it
@@ -353,9 +409,8 @@ class BrowserSessionManager:
                     row["profile_name"],
                 )
                 try:
-                    import signal
-                    os.kill(pid, signal.SIGTERM)
-                except Exception:
+                    psutil.Process(pid).terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
 
             # Cleanup persisted record
@@ -366,6 +421,11 @@ class BrowserSessionManager:
 
     async def shutdown(self) -> None:
         """Stop all running sessions (called on app shutdown)."""
+        # Cancel all PID watchers first
+        for task in self._watcher_tasks.values():
+            task.cancel()
+        self._watcher_tasks.clear()
+
         profile_ids = list(self._sessions.keys())
         for pid in profile_ids:
             try:
