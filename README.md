@@ -6,10 +6,42 @@ Each profile maintains a **consistent fingerprint** across sessions — same dev
 
 ## Installation
 
+### Recommended (bootstrap script)
+
+The bootstrap script pre-installs a stable Playwright wheel to avoid SSL/TLS
+errors during the build, then runs the full editable install:
+
+```powershell
+# Windows (PowerShell)
+.\scripts\setup-dev.ps1
+```
+
 ```bash
+# Linux / macOS
+bash scripts/setup-dev.sh
+```
+
+### Manual
+
+If you prefer to install manually, **pre-install Playwright first** to avoid
+the `curl: (35) schannel SSL/TLS` error that occurs when the camoufox fork
+tries to build Playwright from source:
+
+```bash
+# Step 1: Install stable Playwright wheel (avoids source-build SSL issue)
+pip install playwright==1.52.0
+
+# Step 2: Editable install (Playwright will be upgraded from the fork)
 pip install -e ".[dev]"
 
-# Optional: encrypted export/import
+# Step 3: Install browser binaries
+python -m playwright install
+```
+
+### Optional extras
+
+```bash
+# Encrypted export/import
 pip install -e ".[crypto]"
 ```
 
