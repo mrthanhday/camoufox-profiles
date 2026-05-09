@@ -56,6 +56,27 @@ export interface SystemInfo {
   max_tags_per_profile: number;
 }
 
+export interface AppSettings {
+  host: string;
+  port: number;
+  base_dir: string;
+  max_tags_per_profile: number;
+  server_url: string | null;
+  server_api_key: string | null;
+  profile_count: number;
+  storage_size_bytes: number;
+}
+
+export interface BrowseResult {
+  current: string;
+  parent: string | null;
+  directories: { name: string; path: string }[];
+}
+
+export interface DriveList {
+  drives: { name: string; path: string }[];
+}
+
 export interface TagMeta {
   name: string;
   color: string;
@@ -157,4 +178,20 @@ export const api = {
   // System
   getSystemInfo: () =>
     request<SystemInfo>('/api/info'),
+
+  // Settings
+  getSettings: () =>
+    request<AppSettings>('/api/settings'),
+
+  updateSettings: (data: { base_dir?: string; max_tags_per_profile?: number }) =>
+    request<AppSettings & { restart_required: boolean; changed_fields: string[] }>('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  browseDirectories: (path: string) =>
+    request<BrowseResult>(`/api/settings/browse?path=${encodeURIComponent(path)}`),
+
+  listDrives: () =>
+    request<DriveList>('/api/settings/drives'),
 };

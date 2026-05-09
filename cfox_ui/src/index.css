@@ -235,7 +235,7 @@ a:hover { color: var(--accent-hover); }
   height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: hidden auto;
 }
 
 /* ── Page header ─────────────────────────────────────────────── */
@@ -843,6 +843,185 @@ select.input {
 
 .settings-label { font-size: 12px; color: var(--text-muted); }
 .settings-value { font-size: 12px; font-family: var(--font-mono); color: var(--text-primary); }
+
+/* Path input with browse button */
+.settings-path-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-path-input {
+  flex: 1;
+}
+
+/* Storage info badge */
+.settings-storage-info {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+/* Warning banner */
+.settings-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: var(--yellow-subtle);
+  border: 1px solid rgba(255, 159, 10, 0.2);
+  color: var(--yellow);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  margin-bottom: 20px;
+  line-height: 1.5;
+  animation: slideUp 0.2s var(--ease);
+}
+
+.settings-warning strong {
+  color: var(--yellow);
+}
+
+/* Copy button */
+.settings-copy-btn {
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  transition: all var(--fast);
+  line-height: 1;
+}
+
+.settings-copy-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+/* Danger zone */
+.settings-danger-zone {
+  border: 1px solid rgba(255, 59, 48, 0.25);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-top: 12px;
+  background: rgba(255, 59, 48, 0.03);
+}
+
+/* Info grid */
+.settings-info-grid {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 0;
+  font-size: 12px;
+  align-items: center;
+}
+
+.settings-info-grid .settings-label,
+.settings-info-grid .settings-value {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-info-grid .settings-label:last-of-type,
+.settings-info-grid .settings-value:last-of-type,
+.settings-info-grid > *:nth-last-child(-n+2) {
+  border-bottom: none;
+}
+
+/* Directory browser modal */
+.dir-browser-path {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  min-height: 36px;
+}
+
+.dir-browser-crumb {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  transition: all var(--fast);
+}
+
+.dir-browser-crumb:hover:not(.current) {
+  background: var(--accent-subtle);
+  text-decoration: underline;
+}
+
+.dir-browser-crumb.current {
+  color: var(--text-primary);
+  cursor: default;
+  font-weight: 500;
+}
+
+.dir-browser-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+  user-select: none;
+}
+
+.dir-browser-list {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.dir-browser-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  transition: background var(--fast), color var(--fast);
+}
+
+.dir-browser-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.dir-browser-item:last-child {
+  border-bottom: none;
+}
+
+.dir-browser-parent {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.dir-browser-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
 
 /* ── Bulk bar extras ─────────────────────────────────────────── */
 

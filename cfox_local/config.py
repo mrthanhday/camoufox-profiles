@@ -45,6 +45,17 @@ class Settings:
         if not self.machine_id:
             self.machine_id = _load_or_create_machine_id()
 
+    def to_dict(self) -> dict:
+        """Serialize settings for API response."""
+        return {
+            "host": self.host,
+            "port": self.port,
+            "base_dir": str(self.base_dir),
+            "max_tags_per_profile": self.max_tags_per_profile,
+            "server_url": self.server_url,
+            "server_api_key": self.server_api_key,
+        }
+
     @classmethod
     def load(cls) -> Settings:
         """Load settings from config file and env vars."""
@@ -81,6 +92,7 @@ class Settings:
             "host": self.host,
             "port": self.port,
             "base_dir": str(self.base_dir),
+            "max_tags_per_profile": self.max_tags_per_profile,
         }
         if self.server_url:
             data["server_url"] = self.server_url
