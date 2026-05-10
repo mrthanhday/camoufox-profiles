@@ -261,6 +261,172 @@ class BrowserSessionManager:
             ))
             raise
 
+    async def launch_cloud(
+        self,
+        profile_id: str,
+        cloud_client,
+        machine_id: str,
+        headless: bool = False,
+        drift: bool = True,
+    ) -> BrowserSession:
+        """
+        Cloud launch flow: lock → download → restore → launch → heartbeat.
+
+        Args:
+            profile_id: Cloud profile ID.
+            cloud_client: CloudClient instance.
+            machine_id: This machine's ID.
+            headless: Run headless.
+            drift: Enable drift engine.
+        """
+        from .services.sync_service import restore_essential_data
+        import tempfile
+
+        self._bus.emit(Event(
+            type=EventType.BROWSER_STATUS,
+            profile_id=profile_id,
+            status="launching",
+            extra={"step": "locking"},
+        ))
+
+        # Step 1: Acquire lock
+        lock_resp = await cloud_client.lock_profile(
+            profile_id, machine_id, ttl_minutes=120,
+        )
+        lock_token = lock_resp["lock_token"]
+        server_version = lock_resp.get("essential_data_version", 0)
+
+        # Step 2: Download essential data if available
+        profile = await self._pm.store.get(profile_id)
+        user_data_dir = Path(profile.user_data_dir)
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+
+        if server_version > 0:
+            self._bus.emit(Event(
+                type=EventType.BROWSER_STATUS,
+                profile_id=profile_id,
+                status="launching",
+                extra={"step": "downloading"},
+            ))
+
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+
+            try:
+                dl_info = await cloud_client.download_essential_data(
+                    profile_id, tmp_path,
+                )
+                restore_essential_data(
+                    tmp_path, user_data_dir,
+                    expected_checksum=dl_info.get("checksum"),
+                )
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        # Step 3: Launch browser (same as local)
+        session = await self.launch(
+            profile_id=profile_id,
+            source="cloud",
+            headless=headless,
+            drift=drift,
+        )
+        session.lock_token = lock_token
+        session.base_version = server_version
+
+        # Update persisted session with cloud fields
+        self._persist_session(session)
+
+        # Step 4: Register heartbeat
+        heartbeat_svc = getattr(self, "_heartbeat_service", None)
+        if heartbeat_svc:
+            heartbeat_svc.register(profile_id, lock_token, machine_id)
+
+        return session
+
+    async def stop_cloud(
+        self,
+        profile_id: str,
+        cloud_client,
+        machine_id: str,
+    ) -> None:
+        """
+        Cloud stop flow: collect → upload → unlock → unregister heartbeat.
+        """
+        from .services.sync_service import collect_essential_data
+
+        session = self.get_session(profile_id)
+        if not session:
+            raise ValueError(f"No running session for profile '{profile_id}'")
+
+        # Step 1: Stop browser first
+        await self.stop(profile_id)
+
+        # Step 2: Collect and upload essential data
+        try:
+            profile = await self._pm.store.get(profile_id)
+            zip_path, checksum, size = collect_essential_data(profile.user_data_dir)
+
+            self._bus.emit(Event(
+                type=EventType.BROWSER_STATUS,
+                profile_id=profile_id,
+                status="idle",
+                extra={"step": "uploading"},
+            ))
+
+            await cloud_client.upload_essential_data(profile_id, zip_path)
+            zip_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            logger.error("Failed to upload essential data for %s: %s", profile_id[:8], e)
+            # Upload failed — mark sync incomplete but don't fail the stop
+
+        # Step 3: Unlock
+        try:
+            if session.lock_token:
+                await cloud_client.unlock_profile(
+                    profile_id, session.lock_token, machine_id,
+                )
+        except Exception as e:
+            logger.error("Failed to unlock %s: %s", profile_id[:8], e)
+
+        # Step 4: Unregister heartbeat
+        heartbeat_svc = getattr(self, "_heartbeat_service", None)
+        if heartbeat_svc:
+            heartbeat_svc.unregister(profile_id)
+
+    async def on_heartbeat_death(self, profile_id: str) -> None:
+        """
+        Called by HeartbeatService when lock is lost (300s without heartbeat).
+
+        Force-closes the browser context to prevent split-brain.
+        Does NOT attempt upload/unlock (server already expired the lock).
+        """
+        logger.critical(
+            "HEARTBEAT DEATH — force closing browser for profile %s",
+            profile_id[:8],
+        )
+
+        session = self.get_session(profile_id)
+        if not session:
+            return
+
+        # Force kill browser process
+        if session.browser_pid and psutil.pid_exists(session.browser_pid):
+            try:
+                psutil.Process(session.browser_pid).kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        # Cleanup session
+        await self._cleanup_session(profile_id, reason="crash")
+
+        self._bus.emit(Event(
+            type=EventType.BROWSER_STATUS,
+            profile_id=profile_id,
+            status="error",
+            error="Lock lost — browser force-closed (heartbeat timeout)",
+        ))
+
     async def stop(self, profile_id: str) -> None:
         """Stop a running browser session."""
         async with self._lock:
@@ -421,6 +587,11 @@ class BrowserSessionManager:
 
     async def shutdown(self) -> None:
         """Stop all running sessions (called on app shutdown)."""
+        # Stop heartbeat service
+        heartbeat_svc = getattr(self, "_heartbeat_service", None)
+        if heartbeat_svc:
+            heartbeat_svc.stop()
+
         # Cancel all PID watchers first
         for task in self._watcher_tasks.values():
             task.cancel()
@@ -432,3 +603,7 @@ class BrowserSessionManager:
                 await self.stop(pid)
             except Exception as e:
                 logger.error("Error stopping session %s during shutdown: %s", pid, e)
+
+    def set_heartbeat_service(self, heartbeat_service) -> None:
+        """Set the heartbeat service for cloud session management."""
+        self._heartbeat_service = heartbeat_service

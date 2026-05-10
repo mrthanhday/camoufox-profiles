@@ -242,6 +242,104 @@ cfox health test-1
 cfox launch test-1
 ```
 
+## Desktop Server (`cfox_local/`)
+
+FastAPI server wrapping ProfileManager with REST + WebSocket API. Entry point: `python -m cfox_local` or `cfox-local`.
+
+### Key Modules
+
+| Module | Purpose |
+|--------|---------|
+| `app.py` | FastAPI factory, lifespan, CORS, static file serving |
+| `config.py` | Settings, machine_id persistence, config.json |
+| `session_manager.py` | BrowserSessionManager — PID tracking, crash recovery, concurrent sessions |
+| `routes/*.py` | 7 route modules: profiles, browser, health, proxies, tags, server, ws |
+| `services/cloud_client.py` | HTTP SDK for cfox-server (connect, CRUD, lock, upload) |
+| `services/heartbeat_service.py` | Periodic heartbeat for cloud sessions (30s) |
+| `services/sync_service.py` | Profile sync orchestrator (copy-before-zip) |
+| `services/upload_queue.py` | Background upload queue (dedup, max 3 concurrent) |
+
+### Running
+
+```bash
+python -m cfox_local                          # Default: http://localhost:7600
+python -m cfox_local --port 7600 --no-browser # No auto-open, custom port
+python -m cfox_local --tray                   # System tray mode
+```
+
+## Cloud Server (`cfox_server/`)
+
+Self-hosted profile management server with PostgreSQL backend.
+
+### Key Modules
+
+| Module | Purpose |
+|--------|---------|
+| `app.py` | FastAPI factory, admin bootstrap, lifespan |
+| `config.py` | Pydantic settings from env vars |
+| `middleware.py` | API key auth (HMAC-SHA256) |
+| `schemas.py` | Request/response schemas |
+| `routes/profiles.py` | Cloud profile CRUD |
+| `routes/locks.py` | Lock acquire/release/heartbeat |
+| `routes/storage.py` | Essential data upload/download/versions |
+| `routes/users.py` | User management (admin/member roles) |
+| `services/lock_service.py` | Background lock cleanup |
+| `services/storage_service.py` | File storage + version rotation |
+
+### Deployment
+
+```bash
+# Docker Compose (recommended)
+docker compose up -d
+
+# Manual
+pip install -e ".[server]"
+python -m cfox_server
+```
+
+## Web Dashboard (`cfox_ui/`)
+
+React + Vite + TypeScript SPA served by cfox-local.
+
+### Pages
+
+| Page | File | Features |
+|------|------|----------|
+| Profiles | `pages/Profiles.tsx` | CRUD, launch/stop, batch create, bulk edit, import |
+| Proxy Pool | `pages/ProxyPool.tsx` | Proxy CRUD, bulk import, health check |
+| Tag Manager | `pages/TagManager.tsx` | Tag CRUD, profile counts |
+| Settings | `pages/Settings.tsx` | Storage, cloud config, system info, reset |
+
+### Building
+
+```bash
+cd cfox_ui && npm ci && npm run build
+# Output: cfox_ui/dist/ (served by cfox-local as static files)
+```
+
+## E2E Testing System
+
+42 tests across 6 suites in `tests/e2e/`.
+
+### Running Tests
+
+```bash
+# All E2E (fast, no real browser needed)
+python -m pytest tests/e2e/ -v -m "not real_browser"
+
+# Only API tests
+python -m pytest tests/e2e/test_server_api.py tests/e2e/test_local_api.py tests/e2e/test_cloud_client.py -v
+
+# UI tests (requires: cd cfox_ui && npm run build)
+python -m pytest tests/e2e/test_ui_settings.py tests/e2e/test_ui_profiles.py -v
+```
+
+### Test Architecture
+
+- **Suites 1-3, 6**: In-process via `httpx.ASGITransport` (no ports needed)
+- **Suites 4-5**: Real subprocess on `:9600` with built UI
+- Markers: `@pytest.mark.real_browser` (skip in CI), `@pytest.mark.ui`
+
 ## Key Documentation
 
 - **[FIREFOX_UPGRADE_WORKFLOW.md](FIREFOX_UPGRADE_WORKFLOW.md)**: Why git-based approach, how `retag-baseline` and `copy-additions` work, repo-in-repo structure
@@ -249,8 +347,11 @@ cfox launch test-1
 - **[FIREFOX_142_UPGRADE_NOTES.md](FIREFOX_142_UPGRADE_NOTES.md)**: Version-specific changes and patch fixes
 - **[BUILD_FIXES_142.md](BUILD_FIXES_142.md)**: Build errors and fixes for Firefox 142 upgrade
 - **[DESIGN_NOTES.md](DESIGN_NOTES.md)**: Profile system design decisions, drift engine, IP guard logic
-- **[README.md](README.md)**: User-facing documentation, CLI reference, API reference
-- **`Makefile`**: Build system targets and their purposes
+- **[README.md](README.md)**: Full project documentation (all components)
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: System architecture v6
+- **[docs/TESTING.md](docs/TESTING.md)**: E2E test strategy and guide
+- **[docs/PROGRESS.md](docs/PROGRESS.md)**: Phase completion tracker
+- **`Makefile`**: Firefox build system targets
 
 ## Testing & Validation
 
@@ -261,10 +362,11 @@ make tests  # Run automated Playwright tests
 make build && make run  # Manual testing
 ```
 
-### Profile System
+### Profile System + Full Stack
 ```bash
 pip install -e ".[dev]"
-python -m pytest tests/ -v
+python -m pytest tests/e2e/ -v -m "not real_browser"  # E2E (42 tests)
+python -m pytest tests/ -v                              # Unit tests
 cfox create test --os windows && cfox health test && cfox delete test
 ```
 

@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from camoufox_profiles.exceptions import ProfileNotFoundError
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
 
@@ -165,8 +167,9 @@ async def get_profile(
     if source != "local":
         raise HTTPException(status_code=501, detail="Cloud profiles not yet supported")
 
-    profile = await _pm.store.get(profile_id)
-    if profile is None:
+    try:
+        profile = await _pm.store.get(profile_id)
+    except ProfileNotFoundError:
         raise HTTPException(status_code=404, detail="Profile not found")
 
     return _profile_to_response(profile, "local", _bsm.is_running(profile_id))
@@ -182,8 +185,9 @@ async def update_profile(
     if source != "local":
         raise HTTPException(status_code=501, detail="Cloud profiles not yet supported")
 
-    profile = await _pm.store.get(profile_id)
-    if profile is None:
+    try:
+        profile = await _pm.store.get(profile_id)
+    except ProfileNotFoundError:
         raise HTTPException(status_code=404, detail="Profile not found")
 
     update_data: Dict[str, Any] = {}
@@ -246,8 +250,9 @@ async def delete_profile(
     if _bsm.is_running(profile_id):
         raise HTTPException(status_code=409, detail="Cannot delete a running profile")
 
-    profile = await _pm.store.get(profile_id)
-    if profile is None:
+    try:
+        profile = await _pm.store.get(profile_id)
+    except ProfileNotFoundError:
         raise HTTPException(status_code=404, detail="Profile not found")
 
     await _pm.store.delete(profile_id)

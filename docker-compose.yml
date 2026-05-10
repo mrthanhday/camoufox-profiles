@@ -1,0 +1,47 @@
+# cfox-server Docker Compose
+# Self-hosted profile management server with PostgreSQL
+
+services:
+  # PostgreSQL database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cfox
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cfox_secure_password}
+      POSTGRES_DB: cfox
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cfox -d cfox"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # cfox-server
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cfox:${POSTGRES_PASSWORD:-cfox_secure_password}@db:5432/cfox
+      STORAGE_DIR: /app/data/essential_data
+      HOST: "0.0.0.0"
+      PORT: "8700"
+      LOCK_TTL_MINUTES: "120"
+      MAX_VERSIONS: "3"
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+    volumes:
+      - essential_data:/app/data/essential_data
+    ports:
+      - "${SERVER_PORT:-8700}:8700"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  essential_data:

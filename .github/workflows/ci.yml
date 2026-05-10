@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Python Tests (E2E + Unit)
+  # ─────────────────────────────────────────────
+  python-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install playwright==1.52.0
+          pip install -e ".[dev]"
+
+      - name: Build UI
+        working-directory: cfox_ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run E2E tests (excluding real browser)
+        run: |
+          python -m pytest tests/e2e/ -v -m "not real_browser" \
+            --tb=short \
+            --junitxml=test-results/e2e.xml
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/test_store.py tests/test_fingerprint.py -v \
+            --tb=short \
+            --junitxml=test-results/unit.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: test-results/
+
+  # ─────────────────────────────────────────────
+  # UI Lint + Type Check
+  # ─────────────────────────────────────────────
+  ui-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: cfox_ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cfox_ui
+        run: npm ci
+
+      - name: Lint
+        working-directory: cfox_ui
+        run: npx eslint . --max-warnings 0
+
+      - name: Type check
+        working-directory: cfox_ui
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: cfox_ui
+        run: npm run build

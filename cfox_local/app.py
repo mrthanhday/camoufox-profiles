@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import Settings
-from .routes import browser, health, profiles, proxies, tags, ws
+from .routes import browser, health, profiles, proxies, server, tags, ws
 from .session_manager import BrowserSessionManager
 
 logger = logging.getLogger(__name__)
@@ -59,14 +59,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     proxies.init_routes(pm)
     tags.init_routes(pm)
 
+    # Auto-connect to cloud server if configured
+    app.state.cloud_client = None
+    if settings.cloud_enabled:
+        try:
+            from .services.cloud_client import CloudClient
+            cloud_client = CloudClient(
+                server_url=settings.server_url,
+                api_key=settings.server_api_key,
+            )
+            ok = await cloud_client.connect()
+            if ok:
+                app.state.cloud_client = cloud_client
+                logger.info("Connected to cfox-server: %s", settings.server_url)
+            else:
+                logger.warning("cfox-server not reachable: %s", settings.server_url)
+                await cloud_client.disconnect()
+        except Exception as e:
+            logger.warning("Cloud client init failed: %s", e)
+
     logger.info("cfox-local started on %s:%d", settings.host, settings.port)
     logger.info("Base directory: %s", settings.base_dir)
     logger.info("Machine ID: %s", settings.machine_id)
+    logger.info("Cloud: %s", "connected" if app.state.cloud_client else "disabled")
 
     yield
 
     # Shutdown
     logger.info("Shutting down cfox-local...")
+    if app.state.cloud_client:
+        await app.state.cloud_client.disconnect()
     await bsm.shutdown()
     await pm.close()
     logger.info("cfox-local stopped")
@@ -233,6 +255,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(proxies.router)
     app.include_router(tags.router)
+    app.include_router(server.router)
     app.include_router(ws.router)
 
     # Serve built Web UI if available
