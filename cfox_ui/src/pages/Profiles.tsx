@@ -286,8 +286,9 @@ export function Profiles() {
 
   const handleHealthCheck = useCallback(async (id: string) => {
     try {
-      const report = await api.healthCheck(id);
       const profile = profiles.find((p) => p.id === id);
+      const source = profile?.source || 'local';
+      const report = await api.healthCheck(id, source);
       setHealthReport(report);
       setHealthName(profile?.name || id);
     } catch (e) {
@@ -332,7 +333,7 @@ export function Profiles() {
     const withProxy = selectedProfiles.filter((p) => p.proxy_server);
     if (withProxy.length === 0) { showToast('info', 'No profiles with proxy selected'); return; }
     for (const p of withProxy) {
-      try { await api.healthCheck(p.id); } catch { /* continue */ }
+      try { await api.healthCheck(p.id, p.source); } catch { /* continue */ }
     }
     showToast('info', `Checked proxy for ${withProxy.length} profile${withProxy.length !== 1 ? 's' : ''}`);
   }, [selectedProfiles]);

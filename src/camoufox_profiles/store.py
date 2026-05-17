@@ -221,6 +221,7 @@ class ProfileStore:
         proxy_id: Optional[str] = None,
         creation_ip: Optional[str] = None,
         creation_region: Optional[str] = None,
+        profile_id: Optional[str] = None,
     ) -> Profile:
         """
         Create a new profile with the given fingerprint config.
@@ -235,6 +236,9 @@ class ProfileStore:
             proxy_id: Optional reference to a proxy pool entry.
             creation_ip: IP address at creation time.
             creation_region: Region code at creation time.
+            profile_id: Optional explicit UUID (used when mirroring a cloud
+                profile so local + cloud share the same id). Defaults to a
+                freshly generated UUID4.
 
         Returns:
             The created Profile object.
@@ -249,7 +253,7 @@ class ProfileStore:
             if await cursor.fetchone():
                 raise ProfileNameExistsError(name)
 
-        profile_id = _new_id()
+        profile_id = profile_id or _new_id()
         user_data_dir = self._profile_data_dir(profile_id)
         os.makedirs(user_data_dir, exist_ok=True)
 

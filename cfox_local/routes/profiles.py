@@ -117,11 +117,17 @@ def _get_cloud_client(request: Request):
 
 
 @router.get("")
+@router.get("")
 async def list_profiles(request: Request) -> Dict[str, Any]:
-    """List all profiles (local + cloud if connected)."""
+    """List all profiles (local + cloud if connected).
+
+    When the same profile_id exists in both local SQLite (cloud-shadow) and
+    cloud server, the cloud entry wins so the UI shows authoritative cloud
+    state (lock owner, version, etc.).
+    """
     # Local profiles
     local_profiles = await _pm.store.list()
-    items = [
+    local_items = [
         _profile_to_response(p, "local", _bsm.is_running(p.id))
         for p in local_profiles
     ]
@@ -129,17 +135,29 @@ async def list_profiles(request: Request) -> Dict[str, Any]:
     # Cloud profiles (if connected)
     cloud_client = _get_cloud_client(request)
     server_connected = cloud_client is not None and cloud_client.is_connected
+    cloud_items: List[Dict[str, Any]] = []
+    cloud_ids: set[str] = set()
 
     if server_connected:
         try:
             cloud_data = await cloud_client.list_profiles()
-            cloud_profiles = cloud_data.get("profiles", [])
-            for cp in cloud_profiles:
-                items.append(_cloud_profile_to_response(cp))
+            for cp in cloud_data.get("profiles", []):
+                cid = cp.get("id")
+                if cid:
+                    cloud_ids.add(cid)
+                # Reflect runtime browser status from local BSM (the cloud
+                # server only knows lock state, not whether the browser is
+                # actually running on this machine).
+                resp = _cloud_profile_to_response(cp)
+                if cid and _bsm.is_running(cid):
+                    resp["status"] = "running"
+                cloud_items.append(resp)
         except Exception as e:
             logger.warning("Failed to fetch cloud profiles: %s", e)
-            # Still return local profiles, just mark server as disconnected
             server_connected = False
+
+    # Dedup: drop local-shadow entries whose id matches a cloud profile.
+    items = [it for it in local_items if it["id"] not in cloud_ids] + cloud_items
 
     return {
         "profiles": items,
@@ -157,27 +175,87 @@ async def create_profile(req: CreateProfileRequest, request: Request) -> Dict[st
         if not cloud_client or not cloud_client.is_connected:
             raise HTTPException(status_code=503, detail="Cloud server not connected")
 
-        try:
-            # Build the data payload for the cloud server
-            cloud_data = {
-                "name": req.name,
-                "target_os": req.os,
-                "tags": req.tags or [],
-                "notes": req.notes or "",
-                "fingerprint_config": {},  # Server generates fingerprint
-            }
-            if req.proxy_server:
-                cloud_data["proxy_server"] = req.proxy_server
-                cloud_data["proxy_username"] = req.proxy_username
-                cloud_data["proxy_password"] = req.proxy_password
-            if req.proxy_id:
-                cloud_data["proxy_id"] = req.proxy_id
+        # Generate the fingerprint locally — the cloud server doesn't ship the
+        # GeoIP DB or BrowserForge wheel and only stores the config, so the
+        # client is the right place to capture it. Tag-limit check still applies.
+        if req.tags:
+            tag_limit = getattr(request.app.state.settings, "max_tags_per_profile", 10)
+            if len(req.tags) > tag_limit:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Maximum {tag_limit} tags per profile allowed",
+                )
 
+        from camoufox_profiles.fingerprint import capture_fingerprint
+        from camoufox_profiles.models import ProxyConfig
+
+        proxy_dict = None
+        if req.proxy_server:
+            proxy_dict = ProxyConfig(
+                server=req.proxy_server,
+                username=req.proxy_username,
+                password=req.proxy_password,
+            ).to_playwright()
+
+        try:
+            fingerprint_config = capture_fingerprint(
+                target_os=req.os,
+                proxy=proxy_dict,
+                geoip=req.geoip or (True if proxy_dict else None),
+                block_webrtc=req.block_webrtc,
+            )
+        except Exception as e:
+            logger.error("Fingerprint capture failed: %s", e)
+            raise HTTPException(status_code=500, detail=f"Fingerprint capture failed: {e}")
+
+        cloud_data: Dict[str, Any] = {
+            "name": req.name,
+            "target_os": req.os,
+            "tags": req.tags or [],
+            "notes": req.notes or "",
+            "fingerprint_config": fingerprint_config,
+        }
+        if req.proxy_server:
+            cloud_data["proxy_server"] = req.proxy_server
+            cloud_data["proxy_username"] = req.proxy_username
+            cloud_data["proxy_password"] = req.proxy_password
+        if req.proxy_id:
+            cloud_data["proxy_id"] = req.proxy_id
+
+        try:
             result = await cloud_client.create_profile(cloud_data)
-            return _cloud_profile_to_response(result)
         except Exception as e:
             logger.error("Cloud create failed: %s", e)
             raise HTTPException(status_code=502, detail=f"Cloud create failed: {e}")
+
+        # Mirror the cloud profile into the local SQLite as a "cloud-shadow"
+        # entry. This lets BrowserSessionManager.launch() / stop() / health
+        # treat cloud profiles uniformly. The shadow shares the cloud profile
+        # id so heartbeat / unlock match by id.
+        try:
+            cloud_id = result.get("id")
+            cloud_proxy = None
+            if result.get("proxy_server"):
+                cloud_proxy = ProxyConfig(
+                    server=result["proxy_server"],
+                    username=result.get("proxy_username"),
+                    password=result.get("proxy_password"),
+                )
+            await _pm.store.create(
+                name=result["name"],
+                target_os=result.get("target_os", req.os),
+                fingerprint_config=fingerprint_config,
+                proxy=cloud_proxy,
+                tags=result.get("tags", []),
+                notes=result.get("notes", ""),
+                proxy_id=result.get("proxy_id"),
+                profile_id=cloud_id,
+            )
+        except Exception as e:
+            # Mirror failure shouldn't fail the cloud create — just log.
+            logger.warning("Could not mirror cloud profile locally: %s", e)
+
+        return _cloud_profile_to_response(result)
 
     # ── Local profile (existing flow) ──
     from camoufox_profiles.models import ProxyConfig
@@ -326,10 +404,16 @@ async def delete_profile(
             raise HTTPException(status_code=503, detail="Cloud server not connected")
         try:
             await cloud_client.delete_profile(profile_id)
-            return
         except Exception as e:
             logger.error("Cloud delete failed: %s", e)
             raise HTTPException(status_code=502, detail=f"Cloud delete failed: {e}")
+
+        # Also delete the local cloud-shadow entry if it exists.
+        try:
+            await _pm.store.delete(profile_id)
+        except ProfileNotFoundError:
+            pass
+        return
 
     # ── Local delete (existing flow) ──
     if _bsm.is_running(profile_id):

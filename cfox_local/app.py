@@ -63,9 +63,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Auto-connect to cloud server if configured
     app.state.cloud_client = None
+    app.state.heartbeat_service = None
     if settings.cloud_enabled:
         try:
             from .services.cloud_client import CloudClient
+            from .services.heartbeat_service import HeartbeatService
             cloud_client = CloudClient(
                 server_url=settings.server_url,
                 api_key=settings.server_api_key,
@@ -73,6 +75,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ok = await cloud_client.connect()
             if ok:
                 app.state.cloud_client = cloud_client
+                # Wire heartbeat service for cloud sessions
+                heartbeat = HeartbeatService(
+                    heartbeat_fn=cloud_client.heartbeat,
+                    on_lock_lost=bsm.on_heartbeat_death,
+                )
+                heartbeat.start()
+                bsm.set_heartbeat_service(heartbeat)
+                bsm.set_cloud_context(cloud_client, settings.machine_id)
+                app.state.heartbeat_service = heartbeat
                 logger.info("Connected to cfox-server: %s", settings.server_url)
             else:
                 logger.warning("cfox-server not reachable: %s", settings.server_url)
@@ -89,6 +100,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     logger.info("Shutting down cfox-local...")
+    heartbeat = getattr(app.state, "heartbeat_service", None)
+    if heartbeat:
+        heartbeat.stop()
     if app.state.cloud_client:
         await app.state.cloud_client.disconnect()
     await bsm.shutdown()
@@ -218,7 +232,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Auto-reconnect cloud client when credentials change
         if cloud_changed:
-            # Disconnect existing client
+            # Disconnect existing client + heartbeat
+            old_hb = getattr(app.state, "heartbeat_service", None)
+            if old_hb:
+                try:
+                    old_hb.stop()
+                except Exception:
+                    pass
+                app.state.heartbeat_service = None
             old_client = getattr(app.state, "cloud_client", None)
             if old_client:
                 try:
@@ -226,11 +247,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except Exception:
                     pass
                 app.state.cloud_client = None
+            try:
+                app.state.session_manager.clear_cloud_context()
+            except Exception:
+                pass
 
             # Connect with new credentials if both are provided
             if settings.cloud_enabled:
                 try:
                     from .services.cloud_client import CloudClient
+                    from .services.heartbeat_service import HeartbeatService
                     client = CloudClient(
                         server_url=settings.server_url,
                         api_key=settings.server_api_key,
@@ -238,6 +264,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ok = await client.connect()
                     if ok:
                         app.state.cloud_client = client
+                        bsm = app.state.session_manager
+                        heartbeat = HeartbeatService(
+                            heartbeat_fn=client.heartbeat,
+                            on_lock_lost=bsm.on_heartbeat_death,
+                        )
+                        heartbeat.start()
+                        bsm.set_heartbeat_service(heartbeat)
+                        bsm.set_cloud_context(client, settings.machine_id)
+                        app.state.heartbeat_service = heartbeat
                         logger.info("Reconnected to cfox-server: %s", settings.server_url)
                     else:
                         await client.disconnect()

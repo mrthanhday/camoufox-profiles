@@ -76,6 +76,9 @@ class BrowserSessionManager:
         self._lock = asyncio.Lock()
         self._bus = EventBus.instance()
         self._watcher_tasks: Dict[str, asyncio.Task] = {}
+        # Cloud context — set via set_cloud_context() when a cloud client is wired.
+        self._cloud_client: Any = None
+        self._machine_id: Optional[str] = None
 
         # Ensure running_sessions table
         self._init_db()
@@ -357,7 +360,7 @@ class BrowserSessionManager:
         machine_id: str,
     ) -> None:
         """
-        Cloud stop flow: collect → upload → unlock → unregister heartbeat.
+        Cloud stop flow: unregister heartbeat → stop browser → upload → unlock.
         """
         from .services.sync_service import collect_essential_data
 
@@ -365,10 +368,18 @@ class BrowserSessionManager:
         if not session:
             raise ValueError(f"No running session for profile '{profile_id}'")
 
-        # Step 1: Stop browser first
+        # Step 1: Unregister heartbeat first — don't let it renew the lock
+        # while we're uploading and unlocking.
+        heartbeat_svc = getattr(self, "_heartbeat_service", None)
+        if heartbeat_svc:
+            heartbeat_svc.unregister(profile_id)
+
+        # Step 2: Stop browser (releases SQLite locks on profile data files).
+        # _cleanup_session is called with reason="stopped" → cloud release path
+        # is skipped (we handle upload+unlock below explicitly).
         await self.stop(profile_id)
 
-        # Step 2: Collect and upload essential data
+        # Step 3: Collect and upload essential data
         try:
             profile = await self._pm.store.get(profile_id)
             zip_path, checksum, size = collect_essential_data(profile.user_data_dir)
@@ -380,14 +391,16 @@ class BrowserSessionManager:
                 extra={"step": "uploading"},
             ))
 
-            await cloud_client.upload_essential_data(profile_id, zip_path)
-            zip_path.unlink(missing_ok=True)
+            try:
+                await cloud_client.upload_essential_data(profile_id, zip_path)
+            finally:
+                zip_path.unlink(missing_ok=True)
 
         except Exception as e:
             logger.error("Failed to upload essential data for %s: %s", profile_id[:8], e)
             # Upload failed — mark sync incomplete but don't fail the stop
 
-        # Step 3: Unlock
+        # Step 4: Unlock — even if upload failed, release the lock.
         try:
             if session.lock_token:
                 await cloud_client.unlock_profile(
@@ -395,11 +408,6 @@ class BrowserSessionManager:
                 )
         except Exception as e:
             logger.error("Failed to unlock %s: %s", profile_id[:8], e)
-
-        # Step 4: Unregister heartbeat
-        heartbeat_svc = getattr(self, "_heartbeat_service", None)
-        if heartbeat_svc:
-            heartbeat_svc.unregister(profile_id)
 
     async def on_heartbeat_death(self, profile_id: str) -> None:
         """
@@ -463,16 +471,28 @@ class BrowserSessionManager:
         - Both may fire — idempotent by design.
 
         Args:
-            reason: "external" (user closed) or "crash" (process crashed)
+            reason: "external" (user closed browser X), "crash" (process crashed)
+                    or "stopped" (graceful stop via API).
+
+        For cloud sessions, on "external"/"crash" reasons we also release the
+        lock and unregister heartbeat so the profile doesn't stay stuck locked.
         """
-        # Cancel watcher and wait for it to finish to prevent race
-        task = self._watcher_tasks.pop(profile_id, None)
-        if task and not task.done():
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+        # Skip if we're already in the middle of cancelling this watcher.
+        # Avoids the watcher task cancelling itself (deadlock) when triggered
+        # from _watch_browser_pid → _cleanup_session.
+        current = asyncio.current_task()
+        watcher = self._watcher_tasks.get(profile_id)
+        if watcher is current:
+            # We're inside the watcher; just remove the registration.
+            self._watcher_tasks.pop(profile_id, None)
+        else:
+            task = self._watcher_tasks.pop(profile_id, None)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
         async with self._lock:
             session = self._sessions.pop(profile_id, None)
@@ -489,6 +509,25 @@ class BrowserSessionManager:
             except Exception as e:
                 logger.debug(
                     "Exit stack close during cleanup for '%s': %s",
+                    session.profile_name, e,
+                )
+
+        # Cloud cleanup: release lock + upload essential data when the browser
+        # was closed externally (X button) or crashed. The graceful path
+        # (`stop_cloud()` -> `stop()` -> `_cleanup_session(..., reason="stopped")`)
+        # already handled this before invoking us, so we only act on
+        # "external" / "crash".
+        if (
+            session.source == "cloud"
+            and reason in ("external", "crash")
+            and self._cloud_client is not None
+            and self._machine_id is not None
+        ):
+            try:
+                await self._cloud_release_after_external_close(session, reason)
+            except Exception as e:
+                logger.error(
+                    "Cloud post-close cleanup failed for '%s': %s",
                     session.profile_name, e,
                 )
 
@@ -509,6 +548,65 @@ class BrowserSessionManager:
             error=error_msg,
             extra={"last_used_at": now},
         ))
+
+    async def _cloud_release_after_external_close(
+        self,
+        session: "BrowserSession",
+        reason: str,
+    ) -> None:
+        """Best-effort cloud release after the browser was closed outside the UI.
+
+        Uploads any essential data we can collect, then unlocks. Heartbeat is
+        unregistered last so the lock doesn't get renewed mid-flight.
+        """
+        from .services.sync_service import collect_essential_data
+
+        # 1. Stop heartbeat first so it doesn't keep renewing the lock while we
+        #    upload + unlock.
+        heartbeat_svc = getattr(self, "_heartbeat_service", None)
+        if heartbeat_svc:
+            heartbeat_svc.unregister(session.profile_id)
+
+        # 2. Try to upload essential data (best effort — skip on crash since
+        #    SQLite files might be corrupted).
+        if reason == "external":
+            try:
+                profile = await self._pm.store.get(session.profile_id)
+                zip_path, _checksum, _size = collect_essential_data(profile.user_data_dir)
+                try:
+                    await self._cloud_client.upload_essential_data(
+                        session.profile_id, zip_path,
+                    )
+                    logger.info(
+                        "Uploaded essential data after external close: %s",
+                        session.profile_name,
+                    )
+                finally:
+                    zip_path.unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning(
+                    "Could not upload essential data for '%s' after external close: %s",
+                    session.profile_name, e,
+                )
+
+        # 3. Unlock — even if upload failed, we still want to release the lock.
+        if session.lock_token:
+            try:
+                await self._cloud_client.unlock_profile(
+                    session.profile_id,
+                    session.lock_token,
+                    self._machine_id,
+                )
+                logger.info(
+                    "Released cloud lock after %s close: %s",
+                    reason, session.profile_name,
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to unlock '%s' after external close: %s. "
+                    "Server-side lock TTL will eventually expire it.",
+                    session.profile_name, e,
+                )
 
     async def _watch_browser_pid(self, profile_id: str, pid: int) -> None:
         """
@@ -614,3 +712,18 @@ class BrowserSessionManager:
     def set_heartbeat_service(self, heartbeat_service) -> None:
         """Set the heartbeat service for cloud session management."""
         self._heartbeat_service = heartbeat_service
+
+    def set_cloud_context(self, cloud_client: Any, machine_id: str) -> None:
+        """Register the active cloud client + machine id.
+
+        Used by the external/crash cleanup path so cloud sessions can release
+        their lock + upload essential data even when the browser was closed
+        from outside the UI (X button, OS kill, etc.).
+        """
+        self._cloud_client = cloud_client
+        self._machine_id = machine_id
+
+    def clear_cloud_context(self) -> None:
+        """Forget the cloud client (called on disconnect)."""
+        self._cloud_client = None
+        self._machine_id = None

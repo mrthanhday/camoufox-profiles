@@ -132,21 +132,21 @@ export const api = {
     request<void>(`/api/profiles/${id}?source=${source}`, { method: 'DELETE' }),
 
   // Browser
-  launchProfile: (id: string, opts?: { headless?: boolean; drift?: boolean; startup_url?: string }) =>
-    request<Session>(`/api/profiles/${id}/launch?source=local`, {
+  launchProfile: (id: string, opts?: { headless?: boolean; drift?: boolean; startup_url?: string }, source = 'local') =>
+    request<Session>(`/api/profiles/${id}/launch?source=${source}`, {
       method: 'POST',
       body: JSON.stringify(opts || {}),
     }),
 
-  stopProfile: (id: string) =>
-    request<{ status: string }>(`/api/profiles/${id}/stop?source=local`, { method: 'POST' }),
+  stopProfile: (id: string, source = 'local') =>
+    request<{ status: string }>(`/api/profiles/${id}/stop?source=${source}`, { method: 'POST' }),
 
   listSessions: () =>
     request<{ sessions: Session[] }>('/api/sessions'),
 
   // Health
-  healthCheck: (id: string) =>
-    request<HealthReport>(`/api/profiles/${id}/health?source=local`),
+  healthCheck: (id: string, source = 'local') =>
+    request<HealthReport>(`/api/profiles/${id}/health?source=${source}`),
 
   // Proxies
   listProxies: () =>

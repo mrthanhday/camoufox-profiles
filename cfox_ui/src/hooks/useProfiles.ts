@@ -63,7 +63,9 @@ export function useProfiles() {
   const launchProfile = async (id: string) => {
     setActionState(id, true);
     try {
-      await api.launchProfile(id);
+      const profile = profiles.find((p) => p.id === id);
+      const source = profile?.source || 'local';
+      await api.launchProfile(id, undefined, source);
       setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'launching' } : p)));
     } catch (e) {
       throw e;
@@ -75,7 +77,9 @@ export function useProfiles() {
   const stopProfile = async (id: string) => {
     setActionState(id, true);
     try {
-      await api.stopProfile(id);
+      const profile = profiles.find((p) => p.id === id);
+      const source = profile?.source || 'local';
+      await api.stopProfile(id, source);
       setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'stopping' } : p)));
     } catch (e) {
       throw e;
