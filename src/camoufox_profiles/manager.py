@@ -342,9 +342,20 @@ class ProfileManager:
 
         if profile_ids is None:
             profiles = await self.store.list(limit=10000)
-            profile_ids = [p.id for p in profiles]
+        else:
+            profiles = []
+            for pid in profile_ids:
+                try:
+                    profiles.append(await self.store.get(pid))
+                except Exception:
+                    continue
 
-        return await batch_health_check(self.store, profile_ids, concurrency)
+        report = await batch_health_check(self, profiles, concurrency)
+        return {
+            r.profile_id: r.details
+            for r in report.results
+            if r.success and r.details is not None
+        }
 
     # ── Drift management ───────────────────────────────────────────
 
@@ -416,8 +427,8 @@ class ProfileManager:
         ps = ProxyStore(self.store._ensure_db())
         return await ps.list(tag=tag, alive_only=alive_only)
 
-    async def check_proxies(self, concurrency: int = 5) -> List[Tuple[str, bool, Optional[str], Optional[int]]]:
-        """Health-check all proxies in the pool."""
+    async def check_proxies(self, concurrency: int = 5) -> List[ProxyPoolEntry]:
+        """Health-check all proxies in the pool. Returns updated proxy entries."""
         from .proxy import ProxyStore
         ps = ProxyStore(self.store._ensure_db())
         return await ps.check_all(concurrency=concurrency)

@@ -11,7 +11,7 @@ type Page = 'profiles' | 'proxies' | 'tags' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<Page>('profiles');
-  const { profiles } = useProfiles();
+  const { profiles, serverConnected } = useProfiles();
   const runningCount = profiles.filter((p) => p.status === 'running').length;
 
   // ── System info (#55) ───────────────────────────────────────
@@ -67,8 +67,8 @@ export default function App() {
             </div>
           )}
           <div className="connection-badge">
-            <span className="connection-dot disconnected" />
-            cloud: offline
+            <span className={`connection-dot ${serverConnected ? 'connected' : 'disconnected'}`} />
+            cloud: {serverConnected ? 'online' : 'offline'}
           </div>
         </div>
       </aside>

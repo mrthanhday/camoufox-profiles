@@ -72,7 +72,9 @@ class Settings:
         data: dict = {}
 
         if config_path.exists():
-            with open(config_path, "r", encoding="utf-8") as f:
+            # utf-8-sig transparently strips a BOM if present (e.g. configs
+            # written by PowerShell defaults), and behaves like utf-8 otherwise.
+            with open(config_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
 
         # Env vars override file config

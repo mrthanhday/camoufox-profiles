@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 class UpdateSettingsRequest(BaseModel):
     base_dir: Optional[str] = None
     max_tags_per_profile: Optional[int] = None
+    server_url: Optional[str] = None
+    server_api_key: Optional[str] = None
 
 
 @asynccontextmanager
@@ -201,7 +203,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings.max_tags_per_profile = body.max_tags_per_profile
             changed_fields.append("max_tags_per_profile")
 
+        # Cloud server settings
+        cloud_changed = False
+        if body.server_url is not None:
+            settings.server_url = body.server_url.strip() or None
+            changed_fields.append("server_url")
+            cloud_changed = True
+        if body.server_api_key is not None:
+            settings.server_api_key = body.server_api_key.strip() or None
+            changed_fields.append("server_api_key")
+            cloud_changed = True
+
         settings.save()
+
+        # Auto-reconnect cloud client when credentials change
+        if cloud_changed:
+            # Disconnect existing client
+            old_client = getattr(app.state, "cloud_client", None)
+            if old_client:
+                try:
+                    await old_client.disconnect()
+                except Exception:
+                    pass
+                app.state.cloud_client = None
+
+            # Connect with new credentials if both are provided
+            if settings.cloud_enabled:
+                try:
+                    from .services.cloud_client import CloudClient
+                    client = CloudClient(
+                        server_url=settings.server_url,
+                        api_key=settings.server_api_key,
+                    )
+                    ok = await client.connect()
+                    if ok:
+                        app.state.cloud_client = client
+                        logger.info("Reconnected to cfox-server: %s", settings.server_url)
+                    else:
+                        await client.disconnect()
+                        logger.warning("cfox-server not reachable after settings update")
+                except Exception as e:
+                    logger.warning("Cloud reconnect failed: %s", e)
 
         return {
             **settings.to_dict(),

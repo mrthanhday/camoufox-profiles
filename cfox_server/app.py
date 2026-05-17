@@ -115,13 +115,23 @@ async def _bootstrap_admin(session_factory, admin_api_key: str) -> None:
         await session.commit()
 
     if not admin_api_key:
+        # Don't log raw API key to stdout — write it to a file with restrictive
+        # permissions so log aggregators don't accidentally capture it.
+        from pathlib import Path
+        out_dir = Path("data")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        key_file = out_dir / "admin_api_key.generated"
+        key_file.write_text(api_key, encoding="utf-8")
+        try:
+            # Best effort POSIX 0600 permissions
+            import os
+            os.chmod(key_file, 0o600)
+        except Exception:
+            pass
         logger.warning(
-            "\n"
-            "╔══════════════════════════════════════════════════╗\n"
-            "║  ADMIN API KEY (save this, shown only once):    ║\n"
-            "║  %s  ║\n"
-            "╚══════════════════════════════════════════════════╝",
-            api_key,
+            "Admin API key auto-generated and written to %s. "
+            "Read it once, then move/secure the file. It will not be shown again.",
+            key_file,
         )
     else:
         logger.info("Admin user bootstrapped with provided ADMIN_API_KEY")

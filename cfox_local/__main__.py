@@ -21,7 +21,7 @@ import logging
 import signal
 import sys
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 import uvicorn
 

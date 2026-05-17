@@ -4,6 +4,7 @@ import { TagInput } from './TagInput';
 interface CreateProfileModalProps {
   open: boolean;
   onClose: () => void;
+  serverConnected?: boolean;
   onCreate: (data: {
     name: string;
     os: string;
@@ -12,12 +13,14 @@ interface CreateProfileModalProps {
     proxy_password?: string;
     tags?: string[];
     notes?: string;
+    source?: string;
   }) => Promise<void>;
 }
 
-export function CreateProfileModal({ open, onClose, onCreate }: CreateProfileModalProps) {
+export function CreateProfileModal({ open, onClose, onCreate, serverConnected }: CreateProfileModalProps) {
   const [name, setName] = useState('');
   const [os, setOs] = useState('windows');
+  const [source, setSource] = useState<'local' | 'cloud'>('local');
   const [proxyServer, setProxyServer] = useState('');
   const [proxyUser, setProxyUser] = useState('');
   const [proxyPass, setProxyPass] = useState('');
@@ -45,9 +48,10 @@ export function CreateProfileModal({ open, onClose, onCreate }: CreateProfileMod
         proxy_password: proxyPass || undefined,
         tags: tags.length > 0 ? tags : undefined,
         notes: notes || undefined,
+        source,
       });
       // Reset
-      setName(''); setOs('windows'); setProxyServer(''); setProxyUser('');
+      setName(''); setOs('windows'); setSource('local'); setProxyServer(''); setProxyUser('');
       setProxyPass(''); setTags([]); setNotes('');
       onClose();
     } catch (e) {
@@ -71,6 +75,31 @@ export function CreateProfileModal({ open, onClose, onCreate }: CreateProfileMod
               placeholder="shop-account-1"
               autoFocus
             />
+          </div>
+
+          {/* Source selector — only show when cloud is available */}
+          <div className="input-group">
+            <label>Storage</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${source === 'local' ? 'btn-accent' : 'btn-ghost'}`}
+                onClick={() => setSource('local')}
+                style={{ flex: 1 }}
+              >
+                💾 Local
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${source === 'cloud' ? 'btn-accent' : 'btn-ghost'}`}
+                onClick={() => setSource('cloud')}
+                disabled={!serverConnected}
+                style={{ flex: 1, opacity: serverConnected ? 1 : 0.4 }}
+                title={!serverConnected ? 'Connect to cloud server in Settings first' : 'Store profile on cloud server'}
+              >
+                ☁️ Cloud {!serverConnected && '(offline)'}
+              </button>
+            </div>
           </div>
 
           <div className="input-group">
@@ -146,7 +175,7 @@ export function CreateProfileModal({ open, onClose, onCreate }: CreateProfileMod
               Cancel
             </button>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? <><span className="spinner" /> Creating…</> : 'Create Profile'}
+              {loading ? <><span className="spinner" /> Creating…</> : `Create ${source === 'cloud' ? '☁️' : '💾'} Profile`}
             </button>
           </div>
         </form>

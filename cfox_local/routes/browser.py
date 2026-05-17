@@ -108,19 +108,19 @@ async def warmup_profile(
             detail="Profile is already running — stop it first to run warmup",
         )
 
-    profile = await _pm.store.get(profile_id)
-    if profile is None:
+    from camoufox_profiles.exceptions import ProfileNotFoundError
+    try:
+        profile = await _pm.store.get(profile_id)
+    except ProfileNotFoundError:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    # Run warmup in background
+    # Run warmup in background via ProfileManager (handles launch + warmup_profile)
     async def _run_warmup() -> None:
         try:
-            from camoufox_profiles.warmup import warmup_profile as do_warmup
-
-            report = await do_warmup(
-                profile_manager=_pm,
+            report = await _pm.warmup(
                 profile_id=profile_id,
                 max_sites=req.max_sites,
+                headless=True,
             )
             logger.info(
                 "Warmup complete for '%s': %d/%d sites",

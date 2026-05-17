@@ -133,8 +133,8 @@ async def batch_warmup(
                 logger.info(
                     "Warmed up '%s': %d/%d sites",
                     profile.name,
-                    warmup_report.sites_visited,
-                    warmup_report.sites_attempted,
+                    warmup_report.successful_visits,
+                    warmup_report.total_visits,
                 )
                 return BatchResult(
                     profile_id=profile.id,

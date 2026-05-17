@@ -23,6 +23,8 @@ class ServerSettings(BaseSettings):
     lock_cleanup_interval_seconds: int = 60
     max_versions: int = 3
     admin_api_key: str = ""  # Initial admin key, set via env var
+    # Upload size cap to protect against runaway browser data dumps (default 256 MB).
+    max_upload_bytes: int = 256 * 1024 * 1024
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 

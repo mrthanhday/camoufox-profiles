@@ -353,12 +353,15 @@ class ProfileStore:
         notes: Optional[str] = None,
         last_used_at: Optional[str] = None,
         total_sessions: Optional[int] = None,
+        proxy_server: Optional[str] = None,
+        proxy_username: Optional[str] = None,
+        proxy_password: Optional[str] = None,
     ) -> Profile:
         """
         Update mutable fields of a profile.
 
-        Note: fingerprint_config, target_os, and proxy are immutable
-        after creation to preserve identity consistency.
+        Note: fingerprint_config and target_os are immutable after creation
+        to preserve identity consistency. Proxy can be re-bound.
 
         Raises:
             ProfileNotFoundError: If profile doesn't exist.
@@ -397,6 +400,15 @@ class ProfileStore:
         if total_sessions is not None:
             updates.append("total_sessions = ?")
             params.append(total_sessions)
+
+        if proxy_server is not None:
+            # Empty string clears the proxy
+            updates.append("proxy_server = ?")
+            params.append(proxy_server or None)
+            updates.append("proxy_username = ?")
+            params.append(proxy_username or None)
+            updates.append("proxy_password = ?")
+            params.append(proxy_password or None)
 
         if updates:
             query = f"UPDATE profiles SET {', '.join(updates)} WHERE id = ?"

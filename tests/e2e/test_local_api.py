@@ -273,8 +273,10 @@ async def test_local_delete_running_profile(local_client: AsyncClient):
     assert resp.status_code == 201
     pid = resp.json()["id"]
 
-    # Simulate running session by injecting into BSM's session dict
-    app = local_client._transport._app
+    # Simulate running session by injecting into BSM's session dict.
+    # httpx renamed the transport's app attribute (`_app` → `app`); support both.
+    transport = local_client._transport
+    app = getattr(transport, "app", None) or getattr(transport, "_app", None)
     bsm = app.state.session_manager
     bsm._sessions[pid] = type("FakeSession", (), {
         "profile_id": pid,

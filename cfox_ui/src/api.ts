@@ -67,6 +67,13 @@ export interface AppSettings {
   storage_size_bytes: number;
 }
 
+export interface ServerStatus {
+  cloud_enabled: boolean;
+  connected: boolean;
+  healthy?: boolean;
+  server_url: string | null;
+}
+
 export interface BrowseResult {
   current: string;
   parent: string | null;
@@ -109,19 +116,20 @@ export const api = {
     proxy_password?: string;
     tags?: string[];
     notes?: string;
+    source?: string;
   }) => request<Profile>('/api/profiles', { method: 'POST', body: JSON.stringify(data) }),
 
   getProfile: (id: string, source = 'local') =>
     request<Profile>(`/api/profiles/${id}?source=${source}`),
 
-  updateProfile: (id: string, data: Record<string, unknown>) =>
-    request<Profile>(`/api/profiles/${id}?source=local`, {
+  updateProfile: (id: string, data: Record<string, unknown>, source = 'local') =>
+    request<Profile>(`/api/profiles/${id}?source=${source}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
 
-  deleteProfile: (id: string) =>
-    request<void>(`/api/profiles/${id}?source=local`, { method: 'DELETE' }),
+  deleteProfile: (id: string, source = 'local') =>
+    request<void>(`/api/profiles/${id}?source=${source}`, { method: 'DELETE' }),
 
   // Browser
   launchProfile: (id: string, opts?: { headless?: boolean; drift?: boolean; startup_url?: string }) =>
@@ -183,7 +191,7 @@ export const api = {
   getSettings: () =>
     request<AppSettings>('/api/settings'),
 
-  updateSettings: (data: { base_dir?: string; max_tags_per_profile?: number }) =>
+  updateSettings: (data: { base_dir?: string; max_tags_per_profile?: number; server_url?: string; server_api_key?: string }) =>
     request<AppSettings & { restart_required: boolean; changed_fields: string[] }>('/api/settings', {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -194,4 +202,14 @@ export const api = {
 
   listDrives: () =>
     request<DriveList>('/api/settings/drives'),
+
+  // Server / Cloud
+  getServerStatus: () =>
+    request<ServerStatus>('/api/server/status'),
+
+  connectServer: () =>
+    request<{ connected: boolean; server_url?: string; error?: string }>('/api/server/connect', { method: 'POST' }),
+
+  disconnectServer: () =>
+    request<{ connected: boolean }>('/api/server/disconnect', { method: 'POST' }),
 };

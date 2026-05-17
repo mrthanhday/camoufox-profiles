@@ -7,10 +7,18 @@ import logging
 from fastapi import APIRouter, Request
 
 from ..config import Settings
+from .ws import Event, EventBus, EventType
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/server", tags=["server"])
+
+
+def _broadcast_connection(status: str) -> None:
+    """Broadcast a SERVER_CONNECTION event to all WS clients."""
+    EventBus.instance().emit(
+        Event(type=EventType.SERVER_CONNECTION, status=status)
+    )
 
 
 @router.get("/status")
@@ -60,6 +68,7 @@ async def connect_to_server(request: Request):
     if ok:
         request.app.state.cloud_client = client
         logger.info("Connected to cfox-server: %s", settings.server_url)
+        _broadcast_connection("connected")
         return {"connected": True, "server_url": settings.server_url}
     else:
         await client.disconnect()
@@ -75,4 +84,5 @@ async def disconnect_from_server(request: Request):
         request.app.state.cloud_client = None
         logger.info("Disconnected from cfox-server")
 
+    _broadcast_connection("disconnected")
     return {"connected": False}

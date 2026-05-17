@@ -121,7 +121,7 @@ function DropdownMenu({
 
 export function Profiles() {
   const {
-    profiles, loading, actionLoading, error,
+    profiles, loading, actionLoading, error, serverConnected,
     launchProfile, stopProfile, createProfile, deleteProfile, fetchProfiles,
   } = useProfiles();
 
@@ -276,7 +276,7 @@ export function Profiles() {
     const profile = profiles.find((p) => p.id === id);
     if (!confirm(`Delete "${profile?.name}"? This cannot be undone.`)) return;
     try {
-      await deleteProfile(id);
+      await deleteProfile(id, profile?.source || 'local');
       setSelected((prev) => { const next = new Set(prev); next.delete(id); return next; });
       showToast('info', 'Profile deleted');
     } catch (e) {
@@ -320,10 +320,13 @@ export function Profiles() {
   const executeBulkDelete = useCallback(async () => {
     const ids = [...selected];
     const count = ids.length;
-    for (const id of ids) { try { await deleteProfile(id); } catch { /* continue */ } }
+    for (const id of ids) {
+      const profile = profiles.find((p) => p.id === id);
+      try { await deleteProfile(id, profile?.source || 'local'); } catch { /* continue */ }
+    }
     setSelected(new Set());
     showToast('info', `Deleted ${count} profile${count !== 1 ? 's' : ''}`);
-  }, [selected, deleteProfile]);
+  }, [selected, profiles, deleteProfile]);
 
   const bulkCheckProxy = useCallback(async () => {
     const withProxy = selectedProfiles.filter((p) => p.proxy_server);
@@ -373,7 +376,8 @@ export function Profiles() {
     const ids = selectedProfiles.map((p) => p.id);
     let ok = 0;
     for (const id of ids) {
-      try { await api.updateProfile(id, { proxy_server: proxy }); ok++; } catch { /* continue */ }
+      const src = selectedProfiles.find((p) => p.id === id)?.source || 'local';
+      try { await api.updateProfile(id, { proxy_server: proxy }, src); ok++; } catch { /* continue */ }
     }
     await fetchProfiles();
     showToast('success', `Proxy set for ${ok} profile${ok !== 1 ? 's' : ''}`);
@@ -385,7 +389,8 @@ export function Profiles() {
     const ids = selectedProfiles.map((p) => p.id);
     let ok = 0;
     for (const id of ids) {
-      try { await api.updateProfile(id, { tags }); ok++; } catch { /* continue */ }
+      const src = selectedProfiles.find((p) => p.id === id)?.source || 'local';
+      try { await api.updateProfile(id, { tags }, src); ok++; } catch { /* continue */ }
     }
     await fetchProfiles();
     showToast('success', `Tags set for ${ok} profile${ok !== 1 ? 's' : ''}`);
@@ -422,12 +427,13 @@ export function Profiles() {
   const handleInlineSave = async (newValue: string) => {
     if (!inlineEdit) return;
     const { profileId, field } = inlineEdit;
+    const src = profiles.find((p) => p.id === profileId)?.source || 'local';
     try {
       if (field === 'tags') {
         const tags = JSON.parse(newValue);
-        await api.updateProfile(profileId, { tags });
+        await api.updateProfile(profileId, { tags }, src);
       } else {
-        await api.updateProfile(profileId, { [field]: newValue });
+        await api.updateProfile(profileId, { [field]: newValue }, src);
       }
       // Refresh from server
       await fetchProfiles();
@@ -445,8 +451,9 @@ export function Profiles() {
   const handleInlineProxySave = async (data: { proxy_server?: string; proxy_id?: string }) => {
     if (!inlineProxyEdit) return;
     const { profileId } = inlineProxyEdit;
+    const src = profiles.find((p) => p.id === profileId)?.source || 'local';
     try {
-      await api.updateProfile(profileId, data);
+      await api.updateProfile(profileId, data, src);
       await fetchProfiles();
       showToast('success', 'Proxy updated');
     } catch (e) {
@@ -805,9 +812,10 @@ export function Profiles() {
       <CreateProfileModal
         open={showCreate}
         onClose={() => setShowCreate(false)}
+        serverConnected={serverConnected}
         onCreate={async (data) => {
           await createProfile(data);
-          showToast('success', `Profile "${data.name}" created`);
+          showToast('success', `Profile "${data.name}" created ${data.source === 'cloud' ? '☁️ on cloud' : '💾 locally'}`);
         }}
       />
 

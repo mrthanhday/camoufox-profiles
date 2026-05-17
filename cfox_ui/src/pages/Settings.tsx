@@ -214,7 +214,13 @@ export function Settings() {
   // Editable fields
   const [editBaseDir, setEditBaseDir] = useState('');
   const [editMaxTags, setEditMaxTags] = useState(10);
+  const [editServerUrl, setEditServerUrl] = useState('');
+  const [editApiKey, setEditApiKey] = useState('');
   const [restartRequired, setRestartRequired] = useState(false);
+
+  // Cloud connection state
+  const [cloudStatus, setCloudStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [cloudBusy, setCloudBusy] = useState(false);
 
   // UI state
   const [showBrowser, setShowBrowser] = useState(false);
@@ -237,6 +243,16 @@ export function Settings() {
         setSysInfo(info);
         setEditBaseDir(s.base_dir);
         setEditMaxTags(s.max_tags_per_profile);
+        setEditServerUrl(s.server_url || '');
+        setEditApiKey(s.server_api_key || '');
+
+        // Check cloud status
+        try {
+          const status = await api.getServerStatus();
+          setCloudStatus(status.connected ? 'connected' : 'disconnected');
+        } catch {
+          setCloudStatus('disconnected');
+        }
       } catch (e) {
         showToast('error', 'Failed to load settings');
       } finally {
@@ -246,17 +262,21 @@ export function Settings() {
     load();
   }, []);
 
-  // Detect unsaved base_dir change
+  // Detect unsaved changes
   const baseDirChanged = settings ? editBaseDir !== settings.base_dir : false;
   const maxTagsChanged = settings ? editMaxTags !== settings.max_tags_per_profile : false;
-  const hasChanges = baseDirChanged || maxTagsChanged;
+  const serverUrlChanged = settings ? editServerUrl !== (settings.server_url || '') : false;
+  const apiKeyChanged = settings ? editApiKey !== (settings.server_api_key || '') : false;
+  const hasChanges = baseDirChanged || maxTagsChanged || serverUrlChanged || apiKeyChanged;
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const updates: { base_dir?: string; max_tags_per_profile?: number } = {};
+      const updates: { base_dir?: string; max_tags_per_profile?: number; server_url?: string; server_api_key?: string } = {};
       if (baseDirChanged) updates.base_dir = editBaseDir;
       if (maxTagsChanged) updates.max_tags_per_profile = editMaxTags;
+      if (serverUrlChanged) updates.server_url = editServerUrl;
+      if (apiKeyChanged) updates.server_api_key = editApiKey;
 
       const result = await api.updateSettings(updates);
       setSettings({
@@ -268,11 +288,69 @@ export function Settings() {
         setRestartRequired(true);
       }
 
+      // Refresh cloud status after saving cloud settings
+      if (serverUrlChanged || apiKeyChanged) {
+        try {
+          const status = await api.getServerStatus();
+          setCloudStatus(status.connected ? 'connected' : 'disconnected');
+        } catch {
+          setCloudStatus('disconnected');
+        }
+      }
+
       showToast('success', 'Settings saved');
     } catch (e) {
       showToast('error', e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleConnect = async () => {
+    // Save credentials first if changed
+    if (serverUrlChanged || apiKeyChanged) {
+      setSaving(true);
+      try {
+        const result = await api.updateSettings({ server_url: editServerUrl, server_api_key: editApiKey });
+        setSettings({ ...settings!, ...result });
+      } catch (e) {
+        showToast('error', e instanceof Error ? e.message : 'Save failed');
+        setSaving(false);
+        return;
+      } finally {
+        setSaving(false);
+      }
+    }
+
+    setCloudBusy(true);
+    setCloudStatus('connecting');
+    try {
+      const result = await api.connectServer();
+      if (result.connected) {
+        setCloudStatus('connected');
+        showToast('success', `Connected to ${result.server_url}`);
+      } else {
+        setCloudStatus('disconnected');
+        showToast('error', result.error || 'Connection failed');
+      }
+    } catch (e) {
+      setCloudStatus('disconnected');
+      showToast('error', e instanceof Error ? e.message : 'Connection failed');
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setCloudBusy(true);
+    try {
+      await api.disconnectServer();
+      setCloudStatus('disconnected');
+      showToast('success', 'Disconnected from cloud server');
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : 'Disconnect failed');
+    } finally {
+      setCloudBusy(false);
     }
   };
 
@@ -331,6 +409,8 @@ export function Settings() {
                 if (settings) {
                   setEditBaseDir(settings.base_dir);
                   setEditMaxTags(settings.max_tags_per_profile);
+                  setEditServerUrl(settings.server_url || '');
+                  setEditApiKey(settings.server_api_key || '');
                 }
               }}
             >
@@ -449,21 +529,55 @@ export function Settings() {
         </div>
       </div>
 
-      {/* ④ Cloud Server (Phase 3) */}
+      {/* ④ Cloud Server */}
       <div className="settings-section">
-        <h3>Cloud Server (Phase 3)</h3>
+        <h3>☁️ Cloud Server</h3>
         <div className="input-group">
           <label>Server URL</label>
-          <input className="input" placeholder="https://cfox.myserver.com" disabled />
+          <input
+            className="input"
+            value={editServerUrl}
+            onChange={(e) => setEditServerUrl(e.target.value)}
+            placeholder="https://cfox.myserver.com"
+          />
         </div>
         <div className="input-group">
           <label>API Key</label>
-          <input className="input" type="password" placeholder="sk-..." disabled />
+          <input
+            className="input"
+            type="password"
+            value={editApiKey}
+            onChange={(e) => setEditApiKey(e.target.value)}
+            placeholder="sk-..."
+          />
         </div>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-          Cloud sync will be available in a future update. Currently, all profiles are stored
-          locally.
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className={`connection-dot ${cloudStatus === 'connected' ? 'connected' : 'disconnected'}`} />
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              {cloudStatus === 'connected' ? 'Connected' : cloudStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+            </span>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {cloudStatus === 'connected' ? (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={handleDisconnect}
+                disabled={cloudBusy}
+              >
+                Disconnect
+              </button>
+            ) : (
+              <button
+                className="btn btn-accent btn-sm"
+                onClick={handleConnect}
+                disabled={cloudBusy || !editServerUrl.trim() || !editApiKey.trim()}
+              >
+                {cloudBusy ? <><span className="spinner" /> Connecting…</> : '🔌 Connect'}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ⑤ Danger Zone */}

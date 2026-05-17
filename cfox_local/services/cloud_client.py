@@ -225,11 +225,14 @@ class CloudClient:
         params: Optional[Dict] = None,
         headers: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Make an HTTP request with retries."""
+        """Make an HTTP request with retries (exponential backoff with jitter)."""
         if not self._client:
             raise RuntimeError("Not connected. Call connect() first.")
 
-        last_error = None
+        import asyncio
+        import random
+
+        last_error: Optional[Exception] = None
         for attempt in range(self._max_retries):
             try:
                 resp = await self._client.request(
@@ -239,21 +242,20 @@ class CloudClient:
                     raise CloudAPIError(resp.status_code, resp.text)
                 return resp.json()
 
-            except httpx.TimeoutException as e:
-                last_error = e
-                wait = 2 ** attempt
-                logger.warning("Request timeout (attempt %d/%d), retrying in %ds", attempt + 1, self._max_retries, wait)
-                import asyncio
-                await asyncio.sleep(wait)
-
             except CloudAPIError:
                 raise  # Don't retry API errors
 
-            except httpx.HTTPError as e:
+            except (httpx.TimeoutException, httpx.HTTPError) as e:
                 last_error = e
-                wait = 2 ** attempt
-                logger.warning("HTTP error (attempt %d/%d): %s", attempt + 1, self._max_retries, e)
-                import asyncio
+                if attempt + 1 >= self._max_retries:
+                    break
+                # Exponential backoff with full jitter to avoid thundering herd
+                backoff = min(2 ** attempt, 32)
+                wait = random.uniform(0, backoff)
+                logger.warning(
+                    "Request failed (attempt %d/%d), retry in %.1fs: %s",
+                    attempt + 1, self._max_retries, wait, e,
+                )
                 await asyncio.sleep(wait)
 
         raise CloudConnectionError(f"Failed after {self._max_retries} attempts: {last_error}")

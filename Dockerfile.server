@@ -2,9 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system deps for asyncpg
+# Install system deps for asyncpg + git + curl (Playwright source build needs curl)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
@@ -12,7 +14,11 @@ COPY pyproject.toml README.md ./
 COPY src/ src/
 COPY cfox_server/ cfox_server/
 
-# Install with server extras
+# Step 1: Install stable Playwright wheel first to avoid source-build SSL issue
+# (See README — Manual install steps).
+RUN pip install --no-cache-dir playwright==1.52.0
+
+# Step 2: Install with server extras (Playwright wheel will be picked up).
 RUN pip install --no-cache-dir -e ".[server]"
 
 # Create data directory

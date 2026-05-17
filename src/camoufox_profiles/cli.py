@@ -406,12 +406,33 @@ def proxy_check(ctx: click.Context, concurrency: int) -> None:
             click.echo("Checking proxy health...")
             results = await ps.check_all(concurrency=concurrency)
 
-            alive = sum(1 for _, a, _, _ in results if a)
+            alive = sum(1 for r in results if r.is_alive)
             click.echo(f"\nResults: {alive}/{len(results)} alive")
         finally:
             await store.close()
 
     _run_async(_check())
+
+
+@proxy.command("bind")
+@click.argument("profile_name")
+@click.argument("proxy_id")
+@click.pass_context
+def proxy_bind(ctx: click.Context, profile_name: str, proxy_id: str) -> None:
+    """Bind a proxy pool entry to a profile."""
+    async def _bind():
+        from .manager import ProfileManager
+
+        pm = ProfileManager(_get_base_dir(ctx))
+        await pm.initialize()
+        try:
+            profile = await pm.get_profile_by_name(profile_name)
+            await pm.bind_proxy(profile.id, proxy_id)
+            click.echo(f"Bound proxy {proxy_id[:8]} → profile '{profile_name}'")
+        finally:
+            await pm.close()
+
+    _run_async(_bind())
 
 
 # ─── Export / Import ───────────────────────────────────────────────

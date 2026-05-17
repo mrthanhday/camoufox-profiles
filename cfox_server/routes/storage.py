@@ -60,6 +60,14 @@ async def upload_essential_data(
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
 
+    # Enforce upload size cap to avoid runaway browser data dumps
+    max_bytes = getattr(request.app.state.settings, "max_upload_bytes", 256 * 1024 * 1024)
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload too large: {len(data)} bytes (max {max_bytes})",
+        )
+
     new_version = (model.essential_data_version or 0) + 1
     storage = _get_storage(request)
     checksum, size = storage.save(profile_id, data, new_version)
@@ -97,8 +105,8 @@ async def upload_essential_data(
 @router.get("/{profile_id}/essential-data")
 async def download_essential_data(
     profile_id: str,
+    request: Request,
     version: int = 0,
-    request: Request = None,
     user: AuthUser = Depends(get_current_user),
 ):
     """

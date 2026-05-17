@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +44,7 @@ class BrowserSession:
 
     # Internal — not serialized
     _context: Any = field(default=None, repr=False)
-    _browser: Any = field(default=None, repr=False)
+    _exit_stack: Optional[AsyncExitStack] = field(default=None, repr=False)
     _heartbeat_task: Optional[asyncio.Task] = field(default=None, repr=False)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -180,15 +180,22 @@ class BrowserSessionManager:
         ))
 
         try:
-            # Use V2 launcher — get the context manager
-            launch_cm = self._pm.launch(
-                profile_id=profile_id,
-                drift=drift,
-                headless=headless,
-            )
-
-            # Enter the context manager and keep it open
-            context = await launch_cm.__aenter__()
+            # Use V2 launcher within an AsyncExitStack so we don't hold a raw
+            # context manager reference (which is fragile across Playwright versions).
+            stack = AsyncExitStack()
+            await stack.__aenter__()
+            try:
+                context = await stack.enter_async_context(
+                    self._pm.launch(
+                        profile_id=profile_id,
+                        drift=drift,
+                        headless=headless,
+                    )
+                )
+            except Exception:
+                # Make sure the stack is closed if entering the launcher failed.
+                await stack.aclose()
+                raise
 
             # Get browser PID
             # For persistent contexts, browser.process is None.
@@ -217,7 +224,7 @@ class BrowserSessionManager:
                 profile_name=profile.name,
                 browser_pid=browser_pid,
                 _context=context,
-                _browser=launch_cm,
+                _exit_stack=stack,
             )
 
             # Fast-path: context close event (may not fire on abrupt close)
@@ -475,13 +482,13 @@ class BrowserSessionManager:
 
         self._remove_persisted(profile_id)
 
-        # Exit the launcher context manager to cleanup Playwright resources
-        if session._browser:
+        # Exit the launcher AsyncExitStack to cleanup Playwright resources
+        if session._exit_stack:
             try:
-                await session._browser.__aexit__(None, None, None)
+                await session._exit_stack.aclose()
             except Exception as e:
                 logger.debug(
-                    "Launcher CM exit during cleanup for '%s': %s",
+                    "Exit stack close during cleanup for '%s': %s",
                     session.profile_name, e,
                 )
 

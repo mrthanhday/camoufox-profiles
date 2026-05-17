@@ -45,6 +45,8 @@ export function useProfiles() {
     }
     if (event.type === 'server_connection') {
       setServerConnected(event.status === 'connected');
+      // Re-fetch profiles to load/unload cloud profiles
+      fetchProfiles();
     }
   });
 
@@ -88,8 +90,8 @@ export function useProfiles() {
     return profile;
   };
 
-  const deleteProfile = async (id: string) => {
-    await api.deleteProfile(id);
+  const deleteProfile = async (id: string, source = 'local') => {
+    await api.deleteProfile(id, source);
     setProfiles((prev) => prev.filter((p) => p.id !== id));
   };
 

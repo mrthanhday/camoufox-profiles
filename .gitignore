@@ -94,3 +94,16 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# ── cfox_server — runtime artefacts ──────────────────────────
+cfox_server_test.db
+cfox_server_test.db-shm
+cfox_server_test.db-wal
+data/admin_api_key.generated
+data/essential_data/
+.tmp_cfox_profiles/
+cfox-local.err.log
+cfox-local.out.log
+manual_test.py
+test_consistency.py
+.commandcode/
